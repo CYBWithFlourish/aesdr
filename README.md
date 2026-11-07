@@ -4,6 +4,7 @@
 
 [![Solana](https://img.shields.io/badge/Solana-devnet-9945FF)](https://solana.com)
 [![Anchor](https://img.shields.io/badge/Anchor-1.2.2-blue)](https://www.anchor-lang.com)
+[![Solana Kit](https://img.shields.io/badge/%40solana%2Fkit-8.x-14F195)](https://solana.com/docs/clients/official/javascript)
 [![License](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
 
 ---
@@ -163,9 +164,14 @@ The arbiter is trusted *today*. It is also exactly the seat where a Groth16 veri
 ```bash
 # toolchain: rust 1.89+, anchor 1.2.2, solana 3.x, node 24
 npm install
-anchor build
-anchor test          # 8 tests, local validator
+anchor build          # compiles the program and emits target/idl/aesdr.json
+npm run codegen       # generates the Kit client from that IDL
+npm test              # 34 tests, local validator
 ```
+
+`npm test` boots a throwaway `solana-test-validator` with the program preloaded,
+runs the suite against it, and tears it down. It does not use `anchor test`,
+which would reintroduce web3.js v1.
 
 Deploy:
 
@@ -177,29 +183,74 @@ anchor deploy
 
 The program ID lives in three places and they must agree:
 `declare_id!` in `lib.rs`, `[programs.devnet]` in `Anchor.toml`, and `target/deploy/aesdr-keypair.json`.
-`anchor keys sync` fixes all three at once.
+`anchor keys sync` fixes all three at once. After changing it, rerun
+`npm run codegen` so the generated client points at the new address.
+
+---
+
+## Client stack
+
+The JavaScript client targets **`@solana/kit`**, Solana's recommended SDK.
+`@solana/web3.js` v1 is in maintenance mode and is not a dependency of this repo.
+
+`pkgs/client/src/generated` is produced by **Codama** from the Anchor IDL, so the
+instruction encoders, account decoders, PDA derivations and error codes can never
+drift from the program. Do not edit that tree by hand - change the program and
+rerun `npm run codegen`.
+
+| Package | Responsibility |
+| --- | --- |
+| `@aesdr/client` | Generated Kit bindings (instructions, PDAs, accounts, errors) + `EscrowState` |
+| `@aesdr/sdk` | x402 wire format, escrow lifecycle, `verifyLock`, verdict engine, error decoding |
+
+```ts
+import { createSolanaRpc } from "@solana/kit";
+import { Aesdr, sol } from "@aesdr/sdk";
+
+const aesdr = new Aesdr({ rpc: createSolanaRpc("https://api.devnet.solana.com") });
+
+const { escrow, signature } = await aesdr.lock({
+  buyer, seller: sellerAddress, arbiter: arbiterAddress,
+  sessionId, amount: sol(0.01), minBond: sol(0.02), deadlineSeconds: 300,
+});
+
+// The seller verifies against a *derived* address, not one the buyer supplied.
+const check = await aesdr.verifyLock({ txSignature: signature, sessionId, buyer: buyer.address, seller: sellerAddress });
+```
+
+Notes from building against Kit:
+
+- Amounts are `bigint` and branded (`Lamports`, `UnixTimestamp`); the compiler
+  rejects a bare `number` where lamports are expected.
+- Kit reports a program rejection as a generic preflight failure and hides the
+  logs in `context`. `@aesdr/sdk` decodes them, so callers see
+  `Seller bond is smaller than the escrow requires (code 6005)` and can branch on
+  `err.programError`.
+- Confirmation is polled rather than subscribed, because a seller's server
+  process should not need to hold a websocket open.
 
 ---
 
 ## Tests
 
 ```
-✔ seller posts a collateral bond
-✔ rejects an escrow the bond cannot cover
-✔ happy path: lock, verdict, release
-✔ rejects a second release on the same escrow
-✔ breach path: refund the buyer and slash 10% of the bond
-✔ rejects a verdict from anyone but the arbiter
-✔ buyer cannot reclaim before the deadline
-✔ buyer reclaims unilaterally after the deadline, with no bond slash
+aesdr program                 8 passing   lamport deltas, vault drain, slashing, deadline exit
+aesdr program (via sdk)       8 passing   same flow through @aesdr/sdk
+sdk: verifyLock               2 passing   derived-address verification, wrong price/session
+error decoding                4 passing   program errors surfaced, transport errors untouched
+x402 wire format              4 passing   header round trip, unknown scheme rejected
+verdict engine                8 passing   status, schema, hash, length, quality
+                              ----------
+                              34 passing
 ```
 
 The suite asserts lamport deltas, not just return codes - a passing `release` that moves nothing would fail.
 
 Two behaviours worth knowing, both discovered by the tests:
 
-- A vault drained to zero lamports is **purged by the runtime** at the end of the transaction. Reading it afterwards yields `null`, not a zero-balance account.
+- A vault drained to zero lamports is **purged by the runtime** at the end of the transaction. Reading it afterwards yields nothing, not a zero-balance account.
 - `solana-test-validator` does not produce idle slots, so its `Clock` freezes between transactions. Any deadline test must nudge the chain forward; see `waitForChainTime` in `tests/aesdr.ts`.
+- When the buyer signs `reclaim`, it also pays the fee, so its net delta is the escrowed amount minus the fee. The test reads the actual fee from the transaction rather than assuming a tolerance.
 
 ---
 

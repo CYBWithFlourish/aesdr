@@ -27,7 +27,7 @@ pub struct Reclaim<'info> {
 }
 
 /// Trust-minimizing exit: after the deadline the buyer needs nobody's
-/// cooperation to get the money back. No bond slash — this is not a verdict.
+/// cooperation to get the money back. No bond slash - this is not a verdict.
 pub fn handle_reclaim(ctx: Context<Reclaim>) -> Result<()> {
     let escrow = &ctx.accounts.escrow;
     require!(escrow.is_open(), AesdrError::EscrowNotOpen);
