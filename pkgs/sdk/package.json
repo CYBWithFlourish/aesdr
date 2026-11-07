@@ -1,0 +1,20 @@
+{
+  "name": "@aesdr/sdk",
+  "version": "0.1.0",
+  "description": "Escrow-backed settlement for x402 machine payments",
+  "license": "GPL-3.0-only",
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aesdr/client": "0.1.0",
+    "@solana/kit": "^8.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
