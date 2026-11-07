@@ -1,0 +1,23 @@
+{
+  "name": "@aesdr/client",
+  "version": "0.1.0",
+  "description": "Codama-generated Kit bindings for the AESDR escrow program",
+  "license": "GPL-3.0-only",
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@solana/kit": "^8.6.0",
+    "@solana/program-client-core": "^8.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
