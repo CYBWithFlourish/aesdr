@@ -9,3 +9,8 @@ test-ledger
 .env
 .env.local
 *.log
+
+# Build output for the published packages. `@aesdr/client` and `@aesdr/sdk`
+# are rebuilt from src by `npm run build`, so compiled JS does not belong in git.
+pkgs/*/dist
+pkgs/*/*.tsbuildinfo
