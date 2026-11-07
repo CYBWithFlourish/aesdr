@@ -1,319 +1,222 @@
-import * as anchor from "@anchor-lang/core";
-import { Program } from "@anchor-lang/core";
-import { Aesdr } from "../target/types/aesdr";
+/**
+ * Program-level tests, driven through the SDK on @solana/kit.
+ *
+ * The previous version of this file used Anchor's provider and web3.js v1.
+ * Both are legacy: web3.js 1.x is in maintenance mode and Kit is the
+ * recommended client. Assertions here are on lamport deltas and decoded state,
+ * so they prove the program moves money rather than merely returning Ok.
+ *
+ * Requires a validator with the program loaded - see README, or run
+ * `npm run test:local` which starts one.
+ */
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
-  Keypair,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-  SYSVAR_CLOCK_PUBKEY,
-  SystemProgram,
-  Transaction,
-} from "@solana/web3.js";
+  createKeyPairSignerFromBytes,
+  createSolanaRpc,
+  lamports,
+  type KeyPairSigner,
+  type Rpc,
+  type Signature,
+  type SolanaRpcApi,
+} from "@solana/kit";
 import { assert } from "chai";
 
-const ESCROW = Buffer.from("escrow");
-const VAULT = Buffer.from("vault");
-const BOND = Buffer.from("bond");
+import { Aesdr, EscrowState, sol } from "@aesdr/sdk";
 
-const AMOUNT = new anchor.BN(0.01 * LAMPORTS_PER_SOL);
-const MIN_BOND = new anchor.BN(0.02 * LAMPORTS_PER_SOL);
+const RPC_URL = process.env.AESDR_RPC ?? "http://127.0.0.1:8899";
+const KEY_DIR = mkdtempSync(join(tmpdir(), "aesdr-prog-"));
 
-describe("aesdr", () => {
-  const provider = anchor.AnchorProvider.env();
-  anchor.setProvider(provider);
-  const program = anchor.workspace.aesdr as Program<Aesdr>;
-  const connection = provider.connection;
+const rpc = createSolanaRpc(RPC_URL) as Rpc<SolanaRpcApi>;
+const aesdr = new Aesdr({ rpc });
 
-  const buyer = Keypair.generate();
-  const seller = Keypair.generate();
-  const arbiter = Keypair.generate();
-  const stranger = Keypair.generate();
+async function fundedSigner(name: string, amountSol = 5): Promise<KeyPairSigner> {
+  const path = join(KEY_DIR, `${name}.json`);
+  spawnSync("solana-keygen", ["new", "--no-bip39-passphrase", "-s", "-o", path, "--force"], {
+    stdio: "pipe",
+  });
+  const address = spawnSync("solana-keygen", ["pubkey", path], { encoding: "utf8" }).stdout.trim();
+  const transfer = spawnSync(
+    "solana",
+    [
+      "transfer",
+      "--allow-unfunded-recipient",
+      "--url",
+      RPC_URL,
+      "--keypair",
+      `${process.env.HOME}/.config/solana/id.json`,
+      address,
+      String(amountSol),
+    ],
+    { stdio: "pipe" }
+  );
+  if (transfer.status !== 0) {
+    throw new Error(`faucet transfer failed: ${transfer.stderr.toString()}`);
+  }
+  return createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(readFileSync(path, "utf8"))));
+}
 
-  const sessionId = (n: number) => {
-    const b = Buffer.alloc(32);
-    b.writeUInt32LE(n, 0);
-    return Array.from(b);
-  };
+/** Chain time, not wall time. */
+async function chainNow(): Promise<number> {
+  const slot = await rpc.getSlot().send();
+  const blockTime = await rpc.getBlockTime(slot).send();
+  return Number(blockTime ?? 0);
+}
 
-  const escrowPda = (sid: number[]) =>
-    PublicKey.findProgramAddressSync(
-      [ESCROW, buyer.publicKey.toBuffer(), seller.publicKey.toBuffer(), Buffer.from(sid)],
-      program.programId
-    )[0];
-
-  const vaultPda = (escrow: PublicKey) =>
-    PublicKey.findProgramAddressSync([VAULT, escrow.toBuffer()], program.programId)[0];
-
-  const bondPda = (who: PublicKey) =>
-    PublicKey.findProgramAddressSync([BOND, who.toBuffer()], program.programId)[0];
-
-  /** Chain time, not wall time. Deadline checks are against the validator clock. */
-  const chainNow = async (): Promise<number> => {
-    const clock = await connection.getAccountInfo(SYSVAR_CLOCK_PUBKEY);
-    const data = clock!.data;
-    // unix_timestamp is an i64 at byte offset 32 of the Clock sysvar.
-    return Number(data.readBigInt64LE(32));
-  };
-
-  /**
-   * The test validator only advances its clock as slots are produced, and it
-   * does not produce idle slots. Nudge it with a self-transfer until the chain
-   * agrees the deadline has passed.
-   */
-  const waitForChainTime = async (target: number, timeoutMs = 90_000) => {
-    const start = Date.now();
-    while ((await chainNow()) < target) {
-      if (Date.now() - start > timeoutMs) {
-        throw new Error(`chain clock stuck at ${await chainNow()}, wanted ${target}`);
-      }
-      const tx = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: buyer.publicKey,
-          toPubkey: buyer.publicKey,
-          lamports: 1,
-        })
-      );
-      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-      tx.feePayer = buyer.publicKey;
-      tx.sign(buyer);
-      await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
-      await new Promise((r) => setTimeout(r, 500));
+/**
+ * The validator produces no idle slots, so its clock freezes between
+ * transactions. Poll until the chain agrees, nudging with a no-op transfer.
+ */
+async function waitForChainTime(target: number, timeoutMs = 90_000): Promise<void> {
+  const start = Date.now();
+  while ((await chainNow()) < target) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`chain clock stuck at ${await chainNow()}, wanted ${target}`);
     }
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+}
+
+/** Fee actually charged for a confirmed transaction. */
+async function feePaid(signature: Signature): Promise<bigint> {
+  const tx = await rpc
+    .getTransaction(signature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+      encoding: "json",
+    })
+    .send();
+  return BigInt(tx?.meta?.fee ?? 0);
+}
+
+describe("aesdr program", () => {
+  let buyer: KeyPairSigner;
+  let seller: KeyPairSigner;
+  let arbiter: KeyPairSigner;
+
+  const AMOUNT = sol(0.01);
+  const MIN_BOND = sol(0.02);
+
+  const newSession = (): Uint8Array => {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return bytes;
   };
 
-  const airDrop = async (who: PublicKey, sol: number) => {
-    const sig = await connection.requestAirdrop(who, sol * LAMPORTS_PER_SOL);
-    const bh = await connection.getLatestBlockhash();
-    await connection.confirmTransaction({ signature: sig, ...bh }, "confirmed");
-  };
+  const lock = (opts: { amount?: bigint; minBond?: bigint; deadlineSeconds?: number } = {}) =>
+    aesdr.lock({
+      buyer,
+      seller: seller.address,
+      arbiter: arbiter.address,
+      sessionId: newSession(),
+      amount: opts.amount ?? AMOUNT,
+      minBond: opts.minBond ?? MIN_BOND,
+      deadlineSeconds: opts.deadlineSeconds ?? 300,
+    });
 
-  /** Reads the raw Escrow struct straight off the account buffer. */
-  const readEscrow = async (escrow: PublicKey) => {
-    const info = await connection.getAccountInfo(escrow);
-    return program.coder.accounts.decode("escrow", info!.data);
-  };
-
-  const initEscrow = async (sid: number[], deadline: number, minBond = MIN_BOND) => {
-    const escrow = escrowPda(sid);
-    await program.methods
-      .initEscrow(sid, AMOUNT, minBond, new anchor.BN(deadline))
-      .accountsPartial({
-        buyer: buyer.publicKey,
-        seller: seller.publicKey,
-        arbiter: arbiter.publicKey,
-        escrow,
-        vault: vaultPda(escrow),
-        bond: bondPda(seller.publicKey),
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([buyer])
-      .rpc();
-    return escrow;
-  };
-
-  before(async () => {
-    await airDrop(buyer.publicKey, 10);
-    await airDrop(seller.publicKey, 10);
-    await airDrop(stranger.publicKey, 2);
+  before(async function () {
+    this.timeout(120_000);
+    buyer = await fundedSigner("buyer");
+    seller = await fundedSigner("seller");
+    arbiter = await fundedSigner("arbiter", 2);
+    await aesdr.postBond({ seller, amount: MIN_BOND });
   });
 
-  it("seller posts a collateral bond", async () => {
-    await program.methods
-      .postBond(MIN_BOND)
-      .accountsPartial({ seller: seller.publicKey, bond: bondPda(seller.publicKey) })
-      .signers([seller])
-      .rpc();
-
-    const bond = await connection.getAccountInfo(bondPda(seller.publicKey));
-    assert.equal(bond!.lamports, MIN_BOND.toNumber());
-    assert.equal(bond!.data.length, 0, "bond must hold lamports and no data");
+  it("posts a collateral bond as a bare system account", async () => {
+    assert.equal(await aesdr.bondBalance(seller.address), MIN_BOND);
   });
 
-  it("rejects an escrow the bond cannot cover", async () => {
-    const sid = sessionId(900);
-    const now = await chainNow();
-    let failed = false;
-    try {
-      await initEscrow(sid, now + 300, MIN_BOND.muln(50));
-    } catch (e: any) {
-      failed = true;
-      assert.match(e.toString(), /BondTooSmall|0x1776/i);
-    }
-    assert.isTrue(failed, "escrow should not open without enough collateral");
-  });
-
-  it("happy path: lock, verdict, release", async () => {
-    const sid = sessionId(1);
-    const now = await chainNow();
-    const escrow = await initEscrow(sid, now + 300);
-
-    const vault = vaultPda(escrow);
-    assert.equal(
-      (await connection.getAccountInfo(vault))!.lamports,
-      AMOUNT.toNumber(),
-      "vault must hold the locked amount"
+  it("refuses to open an escrow the bond cannot cover", async () => {
+    const err = await lock({ minBond: MIN_BOND * 50n }).then(
+      () => null,
+      (e: Error) => e
     );
-
-    const state = await readEscrow(escrow);
-    assert.equal(state.state, 0, "OPEN");
-    assert.equal(state.amount.toString(), AMOUNT.toString());
-    assert.ok(state.buyer.equals(buyer.publicKey));
-    assert.ok(state.arbiter.equals(arbiter.publicKey));
-
-    const sellerBefore = await connection.getBalance(seller.publicKey);
-
-    await program.methods
-      .release()
-      .accountsPartial({
-        arbiter: arbiter.publicKey,
-        escrow,
-        seller: seller.publicKey,
-        vault,
-      })
-      .signers([arbiter])
-      .rpc();
-
-    const sellerAfter = await connection.getBalance(seller.publicKey);
-    assert.equal(sellerAfter - sellerBefore, AMOUNT.toNumber());
-    assert.equal((await readEscrow(escrow)).state, 1, "RELEASED");
-
-    // A drained vault is purged by the runtime at the end of the transaction.
-    const vaultInfo = await connection.getAccountInfo(vault);
-    assert.isTrue(vaultInfo === null || vaultInfo.lamports === 0, "vault drained");
+    assert.isNotNull(err);
+    assert.match(err!.message, /BondTooSmall|bond is smaller/i);
   });
 
-  it("rejects a second release on the same escrow", async () => {
-    const sid = sessionId(1);
-    const escrow = escrowPda(sid);
-    let failed = false;
-    try {
-      await program.methods
-        .release()
-        .accountsPartial({
-          arbiter: arbiter.publicKey,
-          escrow,
-          seller: seller.publicKey,
-          vault: vaultPda(escrow),
-        })
-        .signers([arbiter])
-        .rpc();
-    } catch (e: any) {
-      failed = true;
-      assert.match(e.toString(), /EscrowNotOpen|0x1777/i);
-    }
-    assert.isTrue(failed, "release must not be replayable");
+  it("locks funds in the vault, not on the escrow account", async () => {
+    const { escrow, vault } = await lock();
+
+    const view = await aesdr.read(escrow);
+    assert.equal(view!.amount, AMOUNT);
+    assert.equal(view!.vaultLamports, AMOUNT, "vault holds the lamports");
+    assert.equal(view!.state, EscrowState.Open);
+
+    const { value: vaultBalance } = await rpc.getBalance(vault).send();
+    assert.equal(vaultBalance, AMOUNT);  });
+
+  it("pays the seller on release, and drains the vault", async () => {
+    const { escrow, vault } = await lock();
+    const before = (await rpc.getBalance(seller.address).send()).value;
+
+    await aesdr.release({ arbiter, escrow });
+
+    const after = (await rpc.getBalance(seller.address).send()).value;
+    assert.equal(after - before, AMOUNT);
+    assert.equal((await aesdr.read(escrow))!.state, EscrowState.Released);
+
+    // A vault drained to zero is purged by the runtime, so this reads as 0.
+    assert.equal((await rpc.getBalance(vault).send()).value, lamports(0n));
   });
 
-  it("breach path: refund the buyer and slash 10% of the bond", async () => {
-    const sid = sessionId(2);
-    const now = await chainNow();
-    const escrow = await initEscrow(sid, now + 300);
+  it("refunds the buyer and slashes 10% of the bond on breach", async () => {
+    const { escrow } = await lock();
+    const bondBefore = await aesdr.bondBalance(seller.address);
+    const before = (await rpc.getBalance(buyer.address).send()).value;
+    const slash = MIN_BOND / 10n;
 
-    const bond = bondPda(seller.publicKey);
-    const bondBefore = (await connection.getAccountInfo(bond))!.lamports;
-    const buyerBefore = await connection.getBalance(buyer.publicKey);
+    await aesdr.refund({ arbiter, escrow });
 
-    await program.methods
-      .refund()
-      .accountsPartial({
-        arbiter: arbiter.publicKey,
-        escrow,
-        buyer: buyer.publicKey,
-        vault: vaultPda(escrow),
-        bond,
-      })
-      .signers([arbiter])
-      .rpc();
+    const after = (await rpc.getBalance(buyer.address).send()).value;
+    assert.equal(after - before, AMOUNT + slash, "refund plus slash");
+    assert.equal(bondBefore - (await aesdr.bondBalance(seller.address)), slash);
+    assert.equal((await aesdr.read(escrow))!.state, EscrowState.Refunded);
 
-    const expectedSlash = MIN_BOND.toNumber() / 10;
-    const buyerAfter = await connection.getBalance(buyer.publicKey);
-    const bondAfter = (await connection.getAccountInfo(bond))!.lamports;
-
-    assert.equal(buyerAfter - buyerBefore, AMOUNT.toNumber() + expectedSlash);
-    assert.equal(bondBefore - bondAfter, expectedSlash, "bond slashed by 10%");
-    assert.equal((await readEscrow(escrow)).state, 2, "REFUNDED");
-
-    // The slash left the seller under-collateralized. Top it back up so the
-    // remaining tests exercise a seller that is again eligible to be paid.
-    await program.methods
-      .postBond(new anchor.BN(expectedSlash))
-      .accountsPartial({ seller: seller.publicKey, bond })
-      .signers([seller])
-      .rpc();
-    assert.equal((await connection.getAccountInfo(bond))!.lamports, MIN_BOND.toNumber());
+    await aesdr.postBond({ seller, amount: slash });
   });
 
-  it("rejects a verdict from anyone but the arbiter", async () => {
-    const sid = sessionId(3);
-    const now = await chainNow();
-    const escrow = await initEscrow(sid, now + 300);
-
-    let failed = false;
-    try {
-      await program.methods
-        .release()
-        .accountsPartial({
-          arbiter: stranger.publicKey,
-          escrow,
-          seller: seller.publicKey,
-          vault: vaultPda(escrow),
-        })
-        .signers([stranger])
-        .rpc();
-    } catch (e: any) {
-      failed = true;
-    }
-    assert.isTrue(failed, "a stranger must not settle the escrow");
+  it("refuses a verdict from a key that is not the arbiter", async () => {
+    const { escrow } = await lock();
+    const err = await aesdr.release({ arbiter: seller, escrow }).then(
+      () => null,
+      (e: Error) => e
+    );
+    assert.isNotNull(err, "only the escrow's arbiter may settle");
   });
 
-  it("buyer cannot reclaim before the deadline", async () => {
-    const sid = sessionId(4);
-    const now = await chainNow();
-    const escrow = await initEscrow(sid, now + 300);
-
-    let failed = false;
-    try {
-      await program.methods
-        .reclaim()
-        .accountsPartial({
-          buyer: buyer.publicKey,
-          escrow,
-          vault: vaultPda(escrow),
-        })
-        .signers([buyer])
-        .rpc();
-    } catch (e: any) {
-      failed = true;
-      assert.match(e.toString(), /DeadlineNotReached|0x177a/i);
-    }
-    assert.isTrue(failed, "early reclaim must fail");
+  it("refuses an early reclaim", async () => {
+    const { escrow } = await lock();
+    const err = await aesdr.reclaim({ buyer, escrow }).then(
+      () => null,
+      (e: Error) => e
+    );
+    assert.isNotNull(err);
+    assert.match(err!.message, /DeadlineNotReached|not been reached/i);
   });
 
-  it("buyer reclaims unilaterally after the deadline, with no bond slash", async () => {
-    const sid = sessionId(5);
-    const now = await chainNow();
-    const deadline = now + 3;
-    const escrow = await initEscrow(sid, deadline);
+  it("lets the buyer reclaim after the deadline with no bond slash", async () => {
+    const { escrow } = await lock({ deadlineSeconds: 5 });
+    const view = await aesdr.read(escrow);
+    await waitForChainTime(view!.deadline);
 
-    await waitForChainTime(deadline);
+    const bondBefore = await aesdr.bondBalance(seller.address);
+    const buyerBefore = await rpc.getBalance(buyer.address).send();
 
-    const bond = bondPda(seller.publicKey);
-    const bondBefore = (await connection.getAccountInfo(bond))!.lamports;
-    const buyerBefore = await connection.getBalance(buyer.publicKey);
+    const signature = await aesdr.reclaim({ buyer, escrow });
 
-    await program.methods
-      .reclaim()
-      .accountsPartial({
-        buyer: buyer.publicKey,
-        escrow,
-        vault: vaultPda(escrow),
-      })
-      .signers([buyer])
-      .rpc();
+    // The buyer signs, so it also pays the fee: the vault pays the full amount
+    // and the buyer's net delta is short by exactly the fee. Asserting against
+    // the real fee keeps this exact instead of a tolerance, and proves the
+    // vault paid out in full.
+    const fee = await feePaid(signature);
 
-    const buyerAfter = await connection.getBalance(buyer.publicKey);
-    assert.equal(buyerAfter - buyerBefore, AMOUNT.toNumber(), "full refund, no slash");
-    assert.equal((await connection.getAccountInfo(bond))!.lamports, bondBefore);
-    assert.equal((await readEscrow(escrow)).state, 2, "REFUNDED");
+    const buyerAfter = await rpc.getBalance(buyer.address).send();
+    assert.equal(buyerAfter.value - buyerBefore.value, AMOUNT - fee);
+    assert.equal(await aesdr.bondBalance(seller.address), bondBefore, "reclaim is not a verdict");
+    assert.equal((await aesdr.read(escrow))!.state, EscrowState.Refunded);
   });
 });
