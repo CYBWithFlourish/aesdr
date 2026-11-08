@@ -25,6 +25,8 @@ import {
   getStructEncoder,
   getU64Decoder,
   getU64Encoder,
+  getU8Decoder,
+  getU8Encoder,
   type Address,
   type FixedSizeCodec,
   type FixedSizeDecoder,
@@ -47,6 +49,8 @@ export type EscrowOpenedEvent = {
   buyer: Address;
   seller: Address;
   sessionId: ReadonlyUint8Array;
+  asset: number;
+  mint: Address;
   amount: bigint;
   minBond: bigint;
   deadline: bigint;
@@ -57,6 +61,8 @@ export type EscrowOpenedEventArgs = {
   buyer: Address | HasAddress;
   seller: Address | HasAddress;
   sessionId: ReadonlyUint8Array;
+  asset: number;
+  mint: Address | HasAddress;
   amount: number | bigint;
   minBond: number | bigint;
   deadline: number | bigint;
@@ -70,6 +76,8 @@ export function getEscrowOpenedEventEncoder(): FixedSizeEncoder<EscrowOpenedEven
       ["buyer", getAddressEncoder()],
       ["seller", getAddressEncoder()],
       ["sessionId", fixEncoderSize(getBytesEncoder(), 32)],
+      ["asset", getU8Encoder()],
+      ["mint", getAddressEncoder()],
       ["amount", getU64Encoder()],
       ["minBond", getU64Encoder()],
       ["deadline", getI64Encoder()],
@@ -86,6 +94,8 @@ export function getEscrowOpenedEventDecoder(): FixedSizeDecoder<EscrowOpenedEven
       ["buyer", getAddressDecoder()],
       ["seller", getAddressDecoder()],
       ["sessionId", fixDecoderSize(getBytesDecoder(), 32)],
+      ["asset", getU8Decoder()],
+      ["mint", getAddressDecoder()],
       ["amount", getU64Decoder()],
       ["minBond", getU64Decoder()],
       ["deadline", getI64Decoder()],

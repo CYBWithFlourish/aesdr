@@ -56,6 +56,13 @@ export type ReclaimInstruction<
   TAccountBuyer extends string | AccountMeta<string> = string,
   TAccountEscrow extends string | AccountMeta<string> = string,
   TAccountVault extends string | AccountMeta<string> = string,
+  TAccountMint extends string | AccountMeta<string> = string,
+  TAccountVaultAta extends string | AccountMeta<string> = string,
+  TAccountBuyerAta extends string | AccountMeta<string> = string,
+  TAccountTokenProgram extends string | AccountMeta<string> =
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  TAccountAssociatedTokenProgram extends string | AccountMeta<string> =
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
   TAccountSystemProgram extends string | AccountMeta<string> =
     "11111111111111111111111111111111",
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
@@ -73,6 +80,21 @@ export type ReclaimInstruction<
       TAccountVault extends string
         ? WritableAccount<TAccountVault>
         : TAccountVault,
+      TAccountMint extends string
+        ? ReadonlyAccount<TAccountMint>
+        : TAccountMint,
+      TAccountVaultAta extends string
+        ? WritableAccount<TAccountVaultAta>
+        : TAccountVaultAta,
+      TAccountBuyerAta extends string
+        ? WritableAccount<TAccountBuyerAta>
+        : TAccountBuyerAta,
+      TAccountTokenProgram extends string
+        ? ReadonlyAccount<TAccountTokenProgram>
+        : TAccountTokenProgram,
+      TAccountAssociatedTokenProgram extends string
+        ? ReadonlyAccount<TAccountAssociatedTokenProgram>
+        : TAccountAssociatedTokenProgram,
       TAccountSystemProgram extends string
         ? ReadonlyAccount<TAccountSystemProgram>
         : TAccountSystemProgram,
@@ -111,16 +133,30 @@ export type ReclaimAsyncInput<
   TAccountBuyer extends InstructionSignerInput = InstructionSignerInput,
   TAccountEscrow extends InstructionAccountInput = InstructionAccountInput,
   TAccountVault extends InstructionAccountInput = InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountBuyerAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
   /**
    * Must match `escrow.buyer`. The liveness escape hatch.
-   * Writable: this is the account that receives the refund.
+   * Writable: receives the refund, and pays the rent for `buyer_ata` if the
+   * account still has to be created.
    */
   buyer: TAccountBuyer;
   escrow: TAccountEscrow;
   vault?: TAccountVault;
+  /** Only read for SPL escrows, so a SOL settlement passes `None`. */
+  mint?: TAccountMint;
+  vaultAta?: TAccountVaultAta;
+  buyerAta?: TAccountBuyerAta;
+  tokenProgram?: TAccountTokenProgram;
+  associatedTokenProgram?: TAccountAssociatedTokenProgram;
   systemProgram?: TAccountSystemProgram;
 };
 
@@ -128,6 +164,11 @@ export async function getReclaimInstructionAsync<
   TAccountBuyer extends InstructionSignerInput,
   TAccountEscrow extends InstructionAccountInput,
   TAccountVault extends InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput,
+  TAccountBuyerAta extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof AESDR_PROGRAM_ADDRESS,
 >(
@@ -135,6 +176,11 @@ export async function getReclaimInstructionAsync<
     TAccountBuyer,
     TAccountEscrow,
     TAccountVault,
+    TAccountMint,
+    TAccountVaultAta,
+    TAccountBuyerAta,
+    TAccountTokenProgram,
+    TAccountAssociatedTokenProgram,
     TAccountSystemProgram
   >,
   config?: {
@@ -154,6 +200,26 @@ export async function getReclaimInstructionAsync<
     ResolvedInstructionAccountMeta<
       TAccountVault,
       InstructionAccountInputAddress<TAccountVault>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBuyerAta,
+      InstructionAccountInputAddress<TAccountBuyerAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
     >,
     ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
@@ -176,6 +242,27 @@ export async function getReclaimInstructionAsync<
     buyer: { value: input.buyer ?? null, isSigner: true, isWritable: true },
     escrow: { value: input.escrow ?? null, isSigner: false, isWritable: true },
     vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    vaultAta: {
+      value: input.vaultAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    buyerAta: {
+      value: input.buyerAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+    associatedTokenProgram: {
+      value: input.associatedTokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
     systemProgram: {
       value: input.systemProgram ?? null,
       isSigner: false,
@@ -199,6 +286,14 @@ export async function getReclaimInstructionAsync<
       { programAddress },
     );
   }
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+  if (!accounts.associatedTokenProgram.value) {
+    accounts.associatedTokenProgram.value =
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" as Address<"ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL">;
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -209,6 +304,11 @@ export async function getReclaimInstructionAsync<
       getAccountMeta("buyer", accounts.buyer),
       getAccountMeta("escrow", accounts.escrow),
       getAccountMeta("vault", accounts.vault),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("vaultAta", accounts.vaultAta),
+      getAccountMeta("buyerAta", accounts.buyerAta),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
+      getAccountMeta("associatedTokenProgram", accounts.associatedTokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getReclaimInstructionDataEncoder().encode({}),
@@ -228,6 +328,26 @@ export async function getReclaimInstructionAsync<
       InstructionAccountInputAddress<TAccountVault>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBuyerAta,
+      InstructionAccountInputAddress<TAccountBuyerAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -238,16 +358,30 @@ export type ReclaimInput<
   TAccountBuyer extends InstructionSignerInput = InstructionSignerInput,
   TAccountEscrow extends InstructionAccountInput = InstructionAccountInput,
   TAccountVault extends InstructionAccountInput = InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountBuyerAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
   /**
    * Must match `escrow.buyer`. The liveness escape hatch.
-   * Writable: this is the account that receives the refund.
+   * Writable: receives the refund, and pays the rent for `buyer_ata` if the
+   * account still has to be created.
    */
   buyer: TAccountBuyer;
   escrow: TAccountEscrow;
   vault: TAccountVault;
+  /** Only read for SPL escrows, so a SOL settlement passes `None`. */
+  mint?: TAccountMint;
+  vaultAta?: TAccountVaultAta;
+  buyerAta?: TAccountBuyerAta;
+  tokenProgram?: TAccountTokenProgram;
+  associatedTokenProgram?: TAccountAssociatedTokenProgram;
   systemProgram?: TAccountSystemProgram;
 };
 
@@ -255,6 +389,11 @@ export function getReclaimInstruction<
   TAccountBuyer extends InstructionSignerInput,
   TAccountEscrow extends InstructionAccountInput,
   TAccountVault extends InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput,
+  TAccountBuyerAta extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof AESDR_PROGRAM_ADDRESS,
 >(
@@ -262,6 +401,11 @@ export function getReclaimInstruction<
     TAccountBuyer,
     TAccountEscrow,
     TAccountVault,
+    TAccountMint,
+    TAccountVaultAta,
+    TAccountBuyerAta,
+    TAccountTokenProgram,
+    TAccountAssociatedTokenProgram,
     TAccountSystemProgram
   >,
   config?: {
@@ -280,6 +424,26 @@ export function getReclaimInstruction<
   ResolvedInstructionAccountMeta<
     TAccountVault,
     InstructionAccountInputAddress<TAccountVault>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountMint,
+    InstructionAccountInputAddress<TAccountMint>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountVaultAta,
+    InstructionAccountInputAddress<TAccountVaultAta>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountBuyerAta,
+    InstructionAccountInputAddress<TAccountBuyerAta>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountTokenProgram,
+    InstructionAccountInputAddress<TAccountTokenProgram>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountAssociatedTokenProgram,
+    InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
   >,
   ResolvedInstructionAccountMeta<
     TAccountSystemProgram,
@@ -301,6 +465,27 @@ export function getReclaimInstruction<
     buyer: { value: input.buyer ?? null, isSigner: true, isWritable: true },
     escrow: { value: input.escrow ?? null, isSigner: false, isWritable: true },
     vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    vaultAta: {
+      value: input.vaultAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    buyerAta: {
+      value: input.buyerAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+    associatedTokenProgram: {
+      value: input.associatedTokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
     systemProgram: {
       value: input.systemProgram ?? null,
       isSigner: false,
@@ -313,6 +498,14 @@ export function getReclaimInstruction<
   >;
 
   // Resolve default values.
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+  if (!accounts.associatedTokenProgram.value) {
+    accounts.associatedTokenProgram.value =
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" as Address<"ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL">;
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -323,6 +516,11 @@ export function getReclaimInstruction<
       getAccountMeta("buyer", accounts.buyer),
       getAccountMeta("escrow", accounts.escrow),
       getAccountMeta("vault", accounts.vault),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("vaultAta", accounts.vaultAta),
+      getAccountMeta("buyerAta", accounts.buyerAta),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
+      getAccountMeta("associatedTokenProgram", accounts.associatedTokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getReclaimInstructionDataEncoder().encode({}),
@@ -342,6 +540,26 @@ export function getReclaimInstruction<
       InstructionAccountInputAddress<TAccountVault>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBuyerAta,
+      InstructionAccountInputAddress<TAccountBuyerAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -356,12 +574,19 @@ export type ParsedReclaimInstruction<
   accounts: {
     /**
      * Must match `escrow.buyer`. The liveness escape hatch.
-     * Writable: this is the account that receives the refund.
+     * Writable: receives the refund, and pays the rent for `buyer_ata` if the
+     * account still has to be created.
      */
     buyer: TAccountMetas[0];
     escrow: TAccountMetas[1];
     vault: TAccountMetas[2];
-    systemProgram: TAccountMetas[3];
+    /** Only read for SPL escrows, so a SOL settlement passes `None`. */
+    mint?: TAccountMetas[3] | undefined;
+    vaultAta?: TAccountMetas[4] | undefined;
+    buyerAta?: TAccountMetas[5] | undefined;
+    tokenProgram: TAccountMetas[6];
+    associatedTokenProgram: TAccountMetas[7];
+    systemProgram: TAccountMetas[8];
   };
   data: ReclaimInstructionData;
 };
@@ -374,12 +599,12 @@ export function parseReclaimInstruction<
     InstructionWithAccounts<TAccountMetas> &
     InstructionWithData<ReadonlyUint8Array>,
 ): ParsedReclaimInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 4) {
+  if (instruction.accounts.length < 9) {
     throw new SolanaError(
       SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
       {
         actualAccountMetas: instruction.accounts.length,
-        expectedAccountMetas: 4,
+        expectedAccountMetas: 9,
       },
     );
   }
@@ -389,12 +614,23 @@ export function parseReclaimInstruction<
     accountIndex += 1;
     return accountMeta;
   };
+  const getNextOptionalAccount = () => {
+    const accountMeta = getNextAccount();
+    return accountMeta.address === AESDR_PROGRAM_ADDRESS
+      ? undefined
+      : accountMeta;
+  };
   return {
     programAddress: instruction.programAddress,
     accounts: {
       buyer: getNextAccount(),
       escrow: getNextAccount(),
       vault: getNextAccount(),
+      mint: getNextOptionalAccount(),
+      vaultAta: getNextOptionalAccount(),
+      buyerAta: getNextOptionalAccount(),
+      tokenProgram: getNextAccount(),
+      associatedTokenProgram: getNextAccount(),
       systemProgram: getNextAccount(),
     },
     data: getReclaimInstructionDataDecoder().decode(instruction.data),

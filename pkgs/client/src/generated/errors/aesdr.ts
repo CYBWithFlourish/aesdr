@@ -37,6 +37,12 @@ export const AESDR_ERROR__INVALID_SESSION_ID = 0x1778; // 6008
 export const AESDR_ERROR__SELF_DEALING = 0x1779; // 6009
 /** Overflow: Arithmetic overflow */
 export const AESDR_ERROR__OVERFLOW = 0x177a; // 6010
+/** InvalidAsset: Escrow asset must be lamports (0) or SPL (1) */
+export const AESDR_ERROR__INVALID_ASSET = 0x177b; // 6011
+/** MissingTokenAccounts: This escrow needs token accounts that were not supplied */
+export const AESDR_ERROR__MISSING_TOKEN_ACCOUNTS = 0x177c; // 6012
+/** MintMismatch: Token mint does not match the escrow's mint */
+export const AESDR_ERROR__MINT_MISMATCH = 0x177d; // 6013
 
 export type AesdrError =
   | typeof AESDR_ERROR__ALREADY_SETTLED
@@ -44,9 +50,12 @@ export type AesdrError =
   | typeof AESDR_ERROR__DEADLINE_NOT_REACHED
   | typeof AESDR_ERROR__ESCROW_NOT_OPEN
   | typeof AESDR_ERROR__INVALID_AMOUNT
+  | typeof AESDR_ERROR__INVALID_ASSET
   | typeof AESDR_ERROR__INVALID_BOND
   | typeof AESDR_ERROR__INVALID_DEADLINE
   | typeof AESDR_ERROR__INVALID_SESSION_ID
+  | typeof AESDR_ERROR__MINT_MISMATCH
+  | typeof AESDR_ERROR__MISSING_TOKEN_ACCOUNTS
   | typeof AESDR_ERROR__OVERFLOW
   | typeof AESDR_ERROR__SELF_DEALING
   | typeof AESDR_ERROR__UNAUTHORIZED;
@@ -59,9 +68,12 @@ if (process.env["NODE_ENV"] !== "production") {
     [AESDR_ERROR__DEADLINE_NOT_REACHED]: `Deadline has not been reached yet`,
     [AESDR_ERROR__ESCROW_NOT_OPEN]: `Escrow is not in the OPEN state`,
     [AESDR_ERROR__INVALID_AMOUNT]: `Amount must be greater than zero`,
+    [AESDR_ERROR__INVALID_ASSET]: `Escrow asset must be lamports (0) or SPL (1)`,
     [AESDR_ERROR__INVALID_BOND]: `Required bond must be greater than zero`,
     [AESDR_ERROR__INVALID_DEADLINE]: `Deadline must be in the future and within 24 hours`,
     [AESDR_ERROR__INVALID_SESSION_ID]: `Session id must not be all zeroes`,
+    [AESDR_ERROR__MINT_MISMATCH]: `Token mint does not match the escrow's mint`,
+    [AESDR_ERROR__MISSING_TOKEN_ACCOUNTS]: `This escrow needs token accounts that were not supplied`,
     [AESDR_ERROR__OVERFLOW]: `Arithmetic overflow`,
     [AESDR_ERROR__SELF_DEALING]: `Buyer and seller must be different keys`,
     [AESDR_ERROR__UNAUTHORIZED]: `Signer is not authorized for this escrow`,

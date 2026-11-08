@@ -27,9 +27,9 @@ import {
   type InstructionWithAccounts,
   type InstructionWithData,
   type ReadonlyAccount,
-  type ReadonlySignerAccount,
   type ReadonlyUint8Array,
   type WritableAccount,
+  type WritableSignerAccount,
 } from "@solana/kit";
 import {
   getAccountMetaFactory,
@@ -58,6 +58,13 @@ export type RefundInstruction<
   TAccountBuyer extends string | AccountMeta<string> = string,
   TAccountVault extends string | AccountMeta<string> = string,
   TAccountBond extends string | AccountMeta<string> = string,
+  TAccountMint extends string | AccountMeta<string> = string,
+  TAccountVaultAta extends string | AccountMeta<string> = string,
+  TAccountBuyerAta extends string | AccountMeta<string> = string,
+  TAccountTokenProgram extends string | AccountMeta<string> =
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  TAccountAssociatedTokenProgram extends string | AccountMeta<string> =
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
   TAccountSystemProgram extends string | AccountMeta<string> =
     "11111111111111111111111111111111",
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
@@ -66,7 +73,7 @@ export type RefundInstruction<
   InstructionWithAccounts<
     [
       TAccountArbiter extends string
-        ? ReadonlySignerAccount<TAccountArbiter> &
+        ? WritableSignerAccount<TAccountArbiter> &
             AccountSignerMeta<TAccountArbiter>
         : TAccountArbiter,
       TAccountEscrow extends string
@@ -81,6 +88,21 @@ export type RefundInstruction<
       TAccountBond extends string
         ? WritableAccount<TAccountBond>
         : TAccountBond,
+      TAccountMint extends string
+        ? ReadonlyAccount<TAccountMint>
+        : TAccountMint,
+      TAccountVaultAta extends string
+        ? WritableAccount<TAccountVaultAta>
+        : TAccountVaultAta,
+      TAccountBuyerAta extends string
+        ? WritableAccount<TAccountBuyerAta>
+        : TAccountBuyerAta,
+      TAccountTokenProgram extends string
+        ? ReadonlyAccount<TAccountTokenProgram>
+        : TAccountTokenProgram,
+      TAccountAssociatedTokenProgram extends string
+        ? ReadonlyAccount<TAccountAssociatedTokenProgram>
+        : TAccountAssociatedTokenProgram,
       TAccountSystemProgram extends string
         ? ReadonlyAccount<TAccountSystemProgram>
         : TAccountSystemProgram,
@@ -121,15 +143,32 @@ export type RefundAsyncInput<
   TAccountBuyer extends InstructionAccountInput = InstructionAccountInput,
   TAccountVault extends InstructionAccountInput = InstructionAccountInput,
   TAccountBond extends InstructionAccountInput = InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountBuyerAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
-  /** Must match `escrow.arbiter`. The verdict signer. */
+  /**
+   * Must match `escrow.arbiter`. The verdict signer.
+   * Writable: pays the rent for `buyer_ata` when it must be created.
+   */
   arbiter: TAccountArbiter;
   escrow: TAccountEscrow;
   buyer: TAccountBuyer;
   vault?: TAccountVault;
   bond: TAccountBond;
+  /** Only read for SPL escrows, so a SOL settlement passes `None`. */
+  mint?: TAccountMint;
+  vaultAta?: TAccountVaultAta;
+  /** Must already exist; the arbiter creates it in the same transaction. */
+  buyerAta?: TAccountBuyerAta;
+  tokenProgram?: TAccountTokenProgram;
+  associatedTokenProgram?: TAccountAssociatedTokenProgram;
   systemProgram?: TAccountSystemProgram;
 };
 
@@ -139,6 +178,11 @@ export async function getRefundInstructionAsync<
   TAccountBuyer extends InstructionAccountInput,
   TAccountVault extends InstructionAccountInput,
   TAccountBond extends InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput,
+  TAccountBuyerAta extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof AESDR_PROGRAM_ADDRESS,
 >(
@@ -148,6 +192,11 @@ export async function getRefundInstructionAsync<
     TAccountBuyer,
     TAccountVault,
     TAccountBond,
+    TAccountMint,
+    TAccountVaultAta,
+    TAccountBuyerAta,
+    TAccountTokenProgram,
+    TAccountAssociatedTokenProgram,
     TAccountSystemProgram
   >,
   config?: {
@@ -177,6 +226,26 @@ export async function getRefundInstructionAsync<
       InstructionAccountInputAddress<TAccountBond>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBuyerAta,
+      InstructionAccountInputAddress<TAccountBuyerAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -194,15 +263,32 @@ export async function getRefundInstructionAsync<
 
   // Original accounts.
   const originalAccounts = {
-    arbiter: {
-      value: input.arbiter ?? null,
-      isSigner: true,
-      isWritable: false,
-    },
+    arbiter: { value: input.arbiter ?? null, isSigner: true, isWritable: true },
     escrow: { value: input.escrow ?? null, isSigner: false, isWritable: true },
     buyer: { value: input.buyer ?? null, isSigner: false, isWritable: true },
     vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
     bond: { value: input.bond ?? null, isSigner: false, isWritable: true },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    vaultAta: {
+      value: input.vaultAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    buyerAta: {
+      value: input.buyerAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+    associatedTokenProgram: {
+      value: input.associatedTokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
     systemProgram: {
       value: input.systemProgram ?? null,
       isSigner: false,
@@ -226,6 +312,14 @@ export async function getRefundInstructionAsync<
       { programAddress },
     );
   }
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+  if (!accounts.associatedTokenProgram.value) {
+    accounts.associatedTokenProgram.value =
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" as Address<"ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL">;
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -238,6 +332,11 @@ export async function getRefundInstructionAsync<
       getAccountMeta("buyer", accounts.buyer),
       getAccountMeta("vault", accounts.vault),
       getAccountMeta("bond", accounts.bond),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("vaultAta", accounts.vaultAta),
+      getAccountMeta("buyerAta", accounts.buyerAta),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
+      getAccountMeta("associatedTokenProgram", accounts.associatedTokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getRefundInstructionDataEncoder().encode({}),
@@ -265,6 +364,26 @@ export async function getRefundInstructionAsync<
       InstructionAccountInputAddress<TAccountBond>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBuyerAta,
+      InstructionAccountInputAddress<TAccountBuyerAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -277,15 +396,32 @@ export type RefundInput<
   TAccountBuyer extends InstructionAccountInput = InstructionAccountInput,
   TAccountVault extends InstructionAccountInput = InstructionAccountInput,
   TAccountBond extends InstructionAccountInput = InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountBuyerAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
-  /** Must match `escrow.arbiter`. The verdict signer. */
+  /**
+   * Must match `escrow.arbiter`. The verdict signer.
+   * Writable: pays the rent for `buyer_ata` when it must be created.
+   */
   arbiter: TAccountArbiter;
   escrow: TAccountEscrow;
   buyer: TAccountBuyer;
   vault: TAccountVault;
   bond: TAccountBond;
+  /** Only read for SPL escrows, so a SOL settlement passes `None`. */
+  mint?: TAccountMint;
+  vaultAta?: TAccountVaultAta;
+  /** Must already exist; the arbiter creates it in the same transaction. */
+  buyerAta?: TAccountBuyerAta;
+  tokenProgram?: TAccountTokenProgram;
+  associatedTokenProgram?: TAccountAssociatedTokenProgram;
   systemProgram?: TAccountSystemProgram;
 };
 
@@ -295,6 +431,11 @@ export function getRefundInstruction<
   TAccountBuyer extends InstructionAccountInput,
   TAccountVault extends InstructionAccountInput,
   TAccountBond extends InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput,
+  TAccountBuyerAta extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof AESDR_PROGRAM_ADDRESS,
 >(
@@ -304,6 +445,11 @@ export function getRefundInstruction<
     TAccountBuyer,
     TAccountVault,
     TAccountBond,
+    TAccountMint,
+    TAccountVaultAta,
+    TAccountBuyerAta,
+    TAccountTokenProgram,
+    TAccountAssociatedTokenProgram,
     TAccountSystemProgram
   >,
   config?: {
@@ -332,6 +478,26 @@ export function getRefundInstruction<
     InstructionAccountInputAddress<TAccountBond>
   >,
   ResolvedInstructionAccountMeta<
+    TAccountMint,
+    InstructionAccountInputAddress<TAccountMint>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountVaultAta,
+    InstructionAccountInputAddress<TAccountVaultAta>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountBuyerAta,
+    InstructionAccountInputAddress<TAccountBuyerAta>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountTokenProgram,
+    InstructionAccountInputAddress<TAccountTokenProgram>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountAssociatedTokenProgram,
+    InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+  >,
+  ResolvedInstructionAccountMeta<
     TAccountSystemProgram,
     InstructionAccountInputAddress<TAccountSystemProgram>
   >
@@ -348,15 +514,32 @@ export function getRefundInstruction<
 
   // Original accounts.
   const originalAccounts = {
-    arbiter: {
-      value: input.arbiter ?? null,
-      isSigner: true,
-      isWritable: false,
-    },
+    arbiter: { value: input.arbiter ?? null, isSigner: true, isWritable: true },
     escrow: { value: input.escrow ?? null, isSigner: false, isWritable: true },
     buyer: { value: input.buyer ?? null, isSigner: false, isWritable: true },
     vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
     bond: { value: input.bond ?? null, isSigner: false, isWritable: true },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    vaultAta: {
+      value: input.vaultAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    buyerAta: {
+      value: input.buyerAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+    associatedTokenProgram: {
+      value: input.associatedTokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
     systemProgram: {
       value: input.systemProgram ?? null,
       isSigner: false,
@@ -369,6 +552,14 @@ export function getRefundInstruction<
   >;
 
   // Resolve default values.
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+  if (!accounts.associatedTokenProgram.value) {
+    accounts.associatedTokenProgram.value =
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" as Address<"ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL">;
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -381,6 +572,11 @@ export function getRefundInstruction<
       getAccountMeta("buyer", accounts.buyer),
       getAccountMeta("vault", accounts.vault),
       getAccountMeta("bond", accounts.bond),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("vaultAta", accounts.vaultAta),
+      getAccountMeta("buyerAta", accounts.buyerAta),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
+      getAccountMeta("associatedTokenProgram", accounts.associatedTokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getRefundInstructionDataEncoder().encode({}),
@@ -408,6 +604,26 @@ export function getRefundInstruction<
       InstructionAccountInputAddress<TAccountBond>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBuyerAta,
+      InstructionAccountInputAddress<TAccountBuyerAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -420,13 +636,23 @@ export type ParsedRefundInstruction<
 > = {
   programAddress: Address<TProgram>;
   accounts: {
-    /** Must match `escrow.arbiter`. The verdict signer. */
+    /**
+     * Must match `escrow.arbiter`. The verdict signer.
+     * Writable: pays the rent for `buyer_ata` when it must be created.
+     */
     arbiter: TAccountMetas[0];
     escrow: TAccountMetas[1];
     buyer: TAccountMetas[2];
     vault: TAccountMetas[3];
     bond: TAccountMetas[4];
-    systemProgram: TAccountMetas[5];
+    /** Only read for SPL escrows, so a SOL settlement passes `None`. */
+    mint?: TAccountMetas[5] | undefined;
+    vaultAta?: TAccountMetas[6] | undefined;
+    /** Must already exist; the arbiter creates it in the same transaction. */
+    buyerAta?: TAccountMetas[7] | undefined;
+    tokenProgram: TAccountMetas[8];
+    associatedTokenProgram: TAccountMetas[9];
+    systemProgram: TAccountMetas[10];
   };
   data: RefundInstructionData;
 };
@@ -439,12 +665,12 @@ export function parseRefundInstruction<
     InstructionWithAccounts<TAccountMetas> &
     InstructionWithData<ReadonlyUint8Array>,
 ): ParsedRefundInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 6) {
+  if (instruction.accounts.length < 11) {
     throw new SolanaError(
       SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
       {
         actualAccountMetas: instruction.accounts.length,
-        expectedAccountMetas: 6,
+        expectedAccountMetas: 11,
       },
     );
   }
@@ -454,6 +680,12 @@ export function parseRefundInstruction<
     accountIndex += 1;
     return accountMeta;
   };
+  const getNextOptionalAccount = () => {
+    const accountMeta = getNextAccount();
+    return accountMeta.address === AESDR_PROGRAM_ADDRESS
+      ? undefined
+      : accountMeta;
+  };
   return {
     programAddress: instruction.programAddress,
     accounts: {
@@ -462,6 +694,11 @@ export function parseRefundInstruction<
       buyer: getNextAccount(),
       vault: getNextAccount(),
       bond: getNextAccount(),
+      mint: getNextOptionalAccount(),
+      vaultAta: getNextOptionalAccount(),
+      buyerAta: getNextOptionalAccount(),
+      tokenProgram: getNextAccount(),
+      associatedTokenProgram: getNextAccount(),
       systemProgram: getNextAccount(),
     },
     data: getRefundInstructionDataDecoder().decode(instruction.data),

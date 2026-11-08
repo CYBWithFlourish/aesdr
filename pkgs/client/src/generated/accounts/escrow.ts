@@ -66,7 +66,14 @@ export type Escrow = {
   arbiter: Address;
   /** Client-generated id, makes escrows unique per request. */
   sessionId: ReadonlyUint8Array;
-  /** Lamports locked by the buyer. */
+  /** Currency of `amount`: `ASSET_LAMPORTS` (SOL) or `ASSET_SPL` (a token). */
+  asset: number;
+  /**
+   * SPL mint when `asset == ASSET_SPL`; `Pubkey::default()` for lamports.
+   * The mint is stored so settlement cannot be redirected to another token.
+   */
+  mint: Address;
+  /** Lamports locked by the buyer, or token base units when `asset == ASSET_SPL`. */
   amount: bigint;
   /** Seller collateral that must be posted before the escrow opens. */
   minBond: bigint;
@@ -90,7 +97,14 @@ export type EscrowArgs = {
   arbiter: Address | HasAddress;
   /** Client-generated id, makes escrows unique per request. */
   sessionId: ReadonlyUint8Array;
-  /** Lamports locked by the buyer. */
+  /** Currency of `amount`: `ASSET_LAMPORTS` (SOL) or `ASSET_SPL` (a token). */
+  asset: number;
+  /**
+   * SPL mint when `asset == ASSET_SPL`; `Pubkey::default()` for lamports.
+   * The mint is stored so settlement cannot be redirected to another token.
+   */
+  mint: Address | HasAddress;
+  /** Lamports locked by the buyer, or token base units when `asset == ASSET_SPL`. */
   amount: number | bigint;
   /** Seller collateral that must be posted before the escrow opens. */
   minBond: number | bigint;
@@ -111,6 +125,8 @@ export function getEscrowEncoder(): FixedSizeEncoder<EscrowArgs> {
       ["seller", getAddressEncoder()],
       ["arbiter", getAddressEncoder()],
       ["sessionId", fixEncoderSize(getBytesEncoder(), 32)],
+      ["asset", getU8Encoder()],
+      ["mint", getAddressEncoder()],
       ["amount", getU64Encoder()],
       ["minBond", getU64Encoder()],
       ["deadline", getI64Encoder()],
@@ -129,6 +145,8 @@ export function getEscrowDecoder(): FixedSizeDecoder<Escrow> {
     ["seller", getAddressDecoder()],
     ["arbiter", getAddressDecoder()],
     ["sessionId", fixDecoderSize(getBytesDecoder(), 32)],
+    ["asset", getU8Decoder()],
+    ["mint", getAddressDecoder()],
     ["amount", getU64Decoder()],
     ["minBond", getU64Decoder()],
     ["deadline", getI64Decoder()],
@@ -212,5 +230,5 @@ export async function fetchAllMaybeEscrow(
 }
 
 export function getEscrowSize(): number {
-  return 162;
+  return 195;
 }

@@ -9,4 +9,10 @@
  * Regenerate with `npm run codegen` after changing the program.
  */
 export * from "./generated";
-export { BPS_DENOMINATOR, EscrowState, SEEDS, SLASH_BPS, STATE_LABEL } from "./state";
+export {
+  BPS_DENOMINATOR,
+  EscrowState,
+  SEEDS,
+  SLASH_BPS,
+  STATE_LABEL,
+} from "./state";

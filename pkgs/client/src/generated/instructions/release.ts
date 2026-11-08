@@ -27,9 +27,9 @@ import {
   type InstructionWithAccounts,
   type InstructionWithData,
   type ReadonlyAccount,
-  type ReadonlySignerAccount,
   type ReadonlyUint8Array,
   type WritableAccount,
+  type WritableSignerAccount,
 } from "@solana/kit";
 import {
   getAccountMetaFactory,
@@ -57,6 +57,13 @@ export type ReleaseInstruction<
   TAccountEscrow extends string | AccountMeta<string> = string,
   TAccountSeller extends string | AccountMeta<string> = string,
   TAccountVault extends string | AccountMeta<string> = string,
+  TAccountMint extends string | AccountMeta<string> = string,
+  TAccountVaultAta extends string | AccountMeta<string> = string,
+  TAccountSellerAta extends string | AccountMeta<string> = string,
+  TAccountTokenProgram extends string | AccountMeta<string> =
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  TAccountAssociatedTokenProgram extends string | AccountMeta<string> =
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
   TAccountSystemProgram extends string | AccountMeta<string> =
     "11111111111111111111111111111111",
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
@@ -65,7 +72,7 @@ export type ReleaseInstruction<
   InstructionWithAccounts<
     [
       TAccountArbiter extends string
-        ? ReadonlySignerAccount<TAccountArbiter> &
+        ? WritableSignerAccount<TAccountArbiter> &
             AccountSignerMeta<TAccountArbiter>
         : TAccountArbiter,
       TAccountEscrow extends string
@@ -77,6 +84,21 @@ export type ReleaseInstruction<
       TAccountVault extends string
         ? WritableAccount<TAccountVault>
         : TAccountVault,
+      TAccountMint extends string
+        ? ReadonlyAccount<TAccountMint>
+        : TAccountMint,
+      TAccountVaultAta extends string
+        ? WritableAccount<TAccountVaultAta>
+        : TAccountVaultAta,
+      TAccountSellerAta extends string
+        ? WritableAccount<TAccountSellerAta>
+        : TAccountSellerAta,
+      TAccountTokenProgram extends string
+        ? ReadonlyAccount<TAccountTokenProgram>
+        : TAccountTokenProgram,
+      TAccountAssociatedTokenProgram extends string
+        ? ReadonlyAccount<TAccountAssociatedTokenProgram>
+        : TAccountAssociatedTokenProgram,
       TAccountSystemProgram extends string
         ? ReadonlyAccount<TAccountSystemProgram>
         : TAccountSystemProgram,
@@ -116,14 +138,35 @@ export type ReleaseAsyncInput<
   TAccountEscrow extends InstructionAccountInput = InstructionAccountInput,
   TAccountSeller extends InstructionAccountInput = InstructionAccountInput,
   TAccountVault extends InstructionAccountInput = InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountSellerAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
-  /** Must match `escrow.arbiter`. The verdict signer. */
+  /**
+   * Must match `escrow.arbiter`. The verdict signer.
+   * Writable: pays the rent for `seller_ata` when it must be created.
+   */
   arbiter: TAccountArbiter;
   escrow: TAccountEscrow;
   seller: TAccountSeller;
   vault?: TAccountVault;
+  /** Only read for SPL escrows, so a SOL settlement passes `None`. */
+  mint?: TAccountMint;
+  /** Vault ATA. Authority is the vault PDA, not the escrow. */
+  vaultAta?: TAccountVaultAta;
+  /**
+   * Seller's destination. Must already exist; the arbiter creates it in the
+   * same transaction, since only the signer can pay for it.
+   */
+  sellerAta?: TAccountSellerAta;
+  tokenProgram?: TAccountTokenProgram;
+  associatedTokenProgram?: TAccountAssociatedTokenProgram;
   systemProgram?: TAccountSystemProgram;
 };
 
@@ -132,6 +175,11 @@ export async function getReleaseInstructionAsync<
   TAccountEscrow extends InstructionAccountInput,
   TAccountSeller extends InstructionAccountInput,
   TAccountVault extends InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput,
+  TAccountSellerAta extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof AESDR_PROGRAM_ADDRESS,
 >(
@@ -140,6 +188,11 @@ export async function getReleaseInstructionAsync<
     TAccountEscrow,
     TAccountSeller,
     TAccountVault,
+    TAccountMint,
+    TAccountVaultAta,
+    TAccountSellerAta,
+    TAccountTokenProgram,
+    TAccountAssociatedTokenProgram,
     TAccountSystemProgram
   >,
   config?: {
@@ -165,6 +218,26 @@ export async function getReleaseInstructionAsync<
       InstructionAccountInputAddress<TAccountVault>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountSellerAta,
+      InstructionAccountInputAddress<TAccountSellerAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -182,14 +255,31 @@ export async function getReleaseInstructionAsync<
 
   // Original accounts.
   const originalAccounts = {
-    arbiter: {
-      value: input.arbiter ?? null,
-      isSigner: true,
-      isWritable: false,
-    },
+    arbiter: { value: input.arbiter ?? null, isSigner: true, isWritable: true },
     escrow: { value: input.escrow ?? null, isSigner: false, isWritable: true },
     seller: { value: input.seller ?? null, isSigner: false, isWritable: true },
     vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    vaultAta: {
+      value: input.vaultAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    sellerAta: {
+      value: input.sellerAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+    associatedTokenProgram: {
+      value: input.associatedTokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
     systemProgram: {
       value: input.systemProgram ?? null,
       isSigner: false,
@@ -213,6 +303,14 @@ export async function getReleaseInstructionAsync<
       { programAddress },
     );
   }
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+  if (!accounts.associatedTokenProgram.value) {
+    accounts.associatedTokenProgram.value =
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" as Address<"ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL">;
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -224,6 +322,11 @@ export async function getReleaseInstructionAsync<
       getAccountMeta("escrow", accounts.escrow),
       getAccountMeta("seller", accounts.seller),
       getAccountMeta("vault", accounts.vault),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("vaultAta", accounts.vaultAta),
+      getAccountMeta("sellerAta", accounts.sellerAta),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
+      getAccountMeta("associatedTokenProgram", accounts.associatedTokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getReleaseInstructionDataEncoder().encode({}),
@@ -247,6 +350,26 @@ export async function getReleaseInstructionAsync<
       InstructionAccountInputAddress<TAccountVault>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountSellerAta,
+      InstructionAccountInputAddress<TAccountSellerAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -258,14 +381,35 @@ export type ReleaseInput<
   TAccountEscrow extends InstructionAccountInput = InstructionAccountInput,
   TAccountSeller extends InstructionAccountInput = InstructionAccountInput,
   TAccountVault extends InstructionAccountInput = InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountSellerAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
-  /** Must match `escrow.arbiter`. The verdict signer. */
+  /**
+   * Must match `escrow.arbiter`. The verdict signer.
+   * Writable: pays the rent for `seller_ata` when it must be created.
+   */
   arbiter: TAccountArbiter;
   escrow: TAccountEscrow;
   seller: TAccountSeller;
   vault: TAccountVault;
+  /** Only read for SPL escrows, so a SOL settlement passes `None`. */
+  mint?: TAccountMint;
+  /** Vault ATA. Authority is the vault PDA, not the escrow. */
+  vaultAta?: TAccountVaultAta;
+  /**
+   * Seller's destination. Must already exist; the arbiter creates it in the
+   * same transaction, since only the signer can pay for it.
+   */
+  sellerAta?: TAccountSellerAta;
+  tokenProgram?: TAccountTokenProgram;
+  associatedTokenProgram?: TAccountAssociatedTokenProgram;
   systemProgram?: TAccountSystemProgram;
 };
 
@@ -274,6 +418,11 @@ export function getReleaseInstruction<
   TAccountEscrow extends InstructionAccountInput,
   TAccountSeller extends InstructionAccountInput,
   TAccountVault extends InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput,
+  TAccountSellerAta extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof AESDR_PROGRAM_ADDRESS,
 >(
@@ -282,6 +431,11 @@ export function getReleaseInstruction<
     TAccountEscrow,
     TAccountSeller,
     TAccountVault,
+    TAccountMint,
+    TAccountVaultAta,
+    TAccountSellerAta,
+    TAccountTokenProgram,
+    TAccountAssociatedTokenProgram,
     TAccountSystemProgram
   >,
   config?: {
@@ -306,6 +460,26 @@ export function getReleaseInstruction<
     InstructionAccountInputAddress<TAccountVault>
   >,
   ResolvedInstructionAccountMeta<
+    TAccountMint,
+    InstructionAccountInputAddress<TAccountMint>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountVaultAta,
+    InstructionAccountInputAddress<TAccountVaultAta>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountSellerAta,
+    InstructionAccountInputAddress<TAccountSellerAta>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountTokenProgram,
+    InstructionAccountInputAddress<TAccountTokenProgram>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountAssociatedTokenProgram,
+    InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+  >,
+  ResolvedInstructionAccountMeta<
     TAccountSystemProgram,
     InstructionAccountInputAddress<TAccountSystemProgram>
   >
@@ -322,14 +496,31 @@ export function getReleaseInstruction<
 
   // Original accounts.
   const originalAccounts = {
-    arbiter: {
-      value: input.arbiter ?? null,
-      isSigner: true,
-      isWritable: false,
-    },
+    arbiter: { value: input.arbiter ?? null, isSigner: true, isWritable: true },
     escrow: { value: input.escrow ?? null, isSigner: false, isWritable: true },
     seller: { value: input.seller ?? null, isSigner: false, isWritable: true },
     vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    vaultAta: {
+      value: input.vaultAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    sellerAta: {
+      value: input.sellerAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+    associatedTokenProgram: {
+      value: input.associatedTokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
     systemProgram: {
       value: input.systemProgram ?? null,
       isSigner: false,
@@ -342,6 +533,14 @@ export function getReleaseInstruction<
   >;
 
   // Resolve default values.
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+  if (!accounts.associatedTokenProgram.value) {
+    accounts.associatedTokenProgram.value =
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" as Address<"ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL">;
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -353,6 +552,11 @@ export function getReleaseInstruction<
       getAccountMeta("escrow", accounts.escrow),
       getAccountMeta("seller", accounts.seller),
       getAccountMeta("vault", accounts.vault),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("vaultAta", accounts.vaultAta),
+      getAccountMeta("sellerAta", accounts.sellerAta),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
+      getAccountMeta("associatedTokenProgram", accounts.associatedTokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getReleaseInstructionDataEncoder().encode({}),
@@ -376,6 +580,26 @@ export function getReleaseInstruction<
       InstructionAccountInputAddress<TAccountVault>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountSellerAta,
+      InstructionAccountInputAddress<TAccountSellerAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -388,12 +612,26 @@ export type ParsedReleaseInstruction<
 > = {
   programAddress: Address<TProgram>;
   accounts: {
-    /** Must match `escrow.arbiter`. The verdict signer. */
+    /**
+     * Must match `escrow.arbiter`. The verdict signer.
+     * Writable: pays the rent for `seller_ata` when it must be created.
+     */
     arbiter: TAccountMetas[0];
     escrow: TAccountMetas[1];
     seller: TAccountMetas[2];
     vault: TAccountMetas[3];
-    systemProgram: TAccountMetas[4];
+    /** Only read for SPL escrows, so a SOL settlement passes `None`. */
+    mint?: TAccountMetas[4] | undefined;
+    /** Vault ATA. Authority is the vault PDA, not the escrow. */
+    vaultAta?: TAccountMetas[5] | undefined;
+    /**
+     * Seller's destination. Must already exist; the arbiter creates it in the
+     * same transaction, since only the signer can pay for it.
+     */
+    sellerAta?: TAccountMetas[6] | undefined;
+    tokenProgram: TAccountMetas[7];
+    associatedTokenProgram: TAccountMetas[8];
+    systemProgram: TAccountMetas[9];
   };
   data: ReleaseInstructionData;
 };
@@ -406,12 +644,12 @@ export function parseReleaseInstruction<
     InstructionWithAccounts<TAccountMetas> &
     InstructionWithData<ReadonlyUint8Array>,
 ): ParsedReleaseInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 5) {
+  if (instruction.accounts.length < 10) {
     throw new SolanaError(
       SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
       {
         actualAccountMetas: instruction.accounts.length,
-        expectedAccountMetas: 5,
+        expectedAccountMetas: 10,
       },
     );
   }
@@ -421,6 +659,12 @@ export function parseReleaseInstruction<
     accountIndex += 1;
     return accountMeta;
   };
+  const getNextOptionalAccount = () => {
+    const accountMeta = getNextAccount();
+    return accountMeta.address === AESDR_PROGRAM_ADDRESS
+      ? undefined
+      : accountMeta;
+  };
   return {
     programAddress: instruction.programAddress,
     accounts: {
@@ -428,6 +672,11 @@ export function parseReleaseInstruction<
       escrow: getNextAccount(),
       seller: getNextAccount(),
       vault: getNextAccount(),
+      mint: getNextOptionalAccount(),
+      vaultAta: getNextOptionalAccount(),
+      sellerAta: getNextOptionalAccount(),
+      tokenProgram: getNextAccount(),
+      associatedTokenProgram: getNextAccount(),
       systemProgram: getNextAccount(),
     },
     data: getReleaseInstructionDataDecoder().decode(instruction.data),

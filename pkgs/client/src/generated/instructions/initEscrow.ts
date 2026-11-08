@@ -18,6 +18,8 @@ import {
   getStructEncoder,
   getU64Decoder,
   getU64Encoder,
+  getU8Decoder,
+  getU8Encoder,
   SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
   SolanaError,
   transformEncoder,
@@ -64,6 +66,13 @@ export type InitEscrowInstruction<
   TAccountEscrow extends string | AccountMeta<string> = string,
   TAccountVault extends string | AccountMeta<string> = string,
   TAccountBond extends string | AccountMeta<string> = string,
+  TAccountMint extends string | AccountMeta<string> = string,
+  TAccountBuyerTokenAccount extends string | AccountMeta<string> = string,
+  TAccountVaultAta extends string | AccountMeta<string> = string,
+  TAccountTokenProgram extends string | AccountMeta<string> =
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  TAccountAssociatedTokenProgram extends string | AccountMeta<string> =
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
   TAccountSystemProgram extends string | AccountMeta<string> =
     "11111111111111111111111111111111",
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
@@ -90,6 +99,21 @@ export type InitEscrowInstruction<
       TAccountBond extends string
         ? ReadonlyAccount<TAccountBond>
         : TAccountBond,
+      TAccountMint extends string
+        ? ReadonlyAccount<TAccountMint>
+        : TAccountMint,
+      TAccountBuyerTokenAccount extends string
+        ? WritableAccount<TAccountBuyerTokenAccount>
+        : TAccountBuyerTokenAccount,
+      TAccountVaultAta extends string
+        ? WritableAccount<TAccountVaultAta>
+        : TAccountVaultAta,
+      TAccountTokenProgram extends string
+        ? ReadonlyAccount<TAccountTokenProgram>
+        : TAccountTokenProgram,
+      TAccountAssociatedTokenProgram extends string
+        ? ReadonlyAccount<TAccountAssociatedTokenProgram>
+        : TAccountAssociatedTokenProgram,
       TAccountSystemProgram extends string
         ? ReadonlyAccount<TAccountSystemProgram>
         : TAccountSystemProgram,
@@ -100,6 +124,7 @@ export type InitEscrowInstruction<
 export type InitEscrowInstructionData = {
   discriminator: ReadonlyUint8Array;
   sessionId: ReadonlyUint8Array;
+  asset: number;
   amount: bigint;
   minBond: bigint;
   deadline: bigint;
@@ -107,6 +132,7 @@ export type InitEscrowInstructionData = {
 
 export type InitEscrowInstructionDataArgs = {
   sessionId: ReadonlyUint8Array;
+  asset: number;
   amount: number | bigint;
   minBond: number | bigint;
   deadline: number | bigint;
@@ -117,6 +143,7 @@ export function getInitEscrowInstructionDataEncoder(): FixedSizeEncoder<InitEscr
     getStructEncoder([
       ["discriminator", fixEncoderSize(getBytesEncoder(), 8)],
       ["sessionId", fixEncoderSize(getBytesEncoder(), 32)],
+      ["asset", getU8Encoder()],
       ["amount", getU64Encoder()],
       ["minBond", getU64Encoder()],
       ["deadline", getI64Encoder()],
@@ -129,6 +156,7 @@ export function getInitEscrowInstructionDataDecoder(): FixedSizeDecoder<InitEscr
   return getStructDecoder([
     ["discriminator", fixDecoderSize(getBytesDecoder(), 8)],
     ["sessionId", fixDecoderSize(getBytesDecoder(), 32)],
+    ["asset", getU8Decoder()],
     ["amount", getU64Decoder()],
     ["minBond", getU64Decoder()],
     ["deadline", getI64Decoder()],
@@ -152,6 +180,14 @@ export type InitEscrowAsyncInput<
   TAccountEscrow extends InstructionAccountInput = InstructionAccountInput,
   TAccountVault extends InstructionAccountInput = InstructionAccountInput,
   TAccountBond extends InstructionAccountInput = InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountBuyerTokenAccount extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
@@ -159,11 +195,30 @@ export type InitEscrowAsyncInput<
   seller: TAccountSeller;
   arbiter: TAccountArbiter;
   escrow?: TAccountEscrow;
-  /** Lamport vault. Must NOT be an existing populated account. */
+  /**
+   * Lamport vault. Also the authority of `vault_ata` for SPL escrows.
+   * Must NOT be an existing populated account.
+   */
   vault?: TAccountVault;
   bond?: TAccountBond;
+  /** Token mint. Only read for SPL escrows, so a SOL escrow passes `None`. */
+  mint?: TAccountMint;
+  /**
+   * Buyer's source token account. SPL escrows only; must be owned by the
+   * buyer and hold `mint`.
+   */
+  buyerTokenAccount?: TAccountBuyerTokenAccount;
+  /**
+   * Vault ATA, owned by the `vault` PDA. Must already exist for an SPL
+   * escrow: the buyer creates it in the same transaction, because the vault
+   * PDA cannot sign for its own account creation. Unused for lamports.
+   */
+  vaultAta?: TAccountVaultAta;
+  tokenProgram?: TAccountTokenProgram;
+  associatedTokenProgram?: TAccountAssociatedTokenProgram;
   systemProgram?: TAccountSystemProgram;
   sessionId: InitEscrowInstructionDataArgs["sessionId"];
+  asset: InitEscrowInstructionDataArgs["asset"];
   amount: InitEscrowInstructionDataArgs["amount"];
   minBond: InitEscrowInstructionDataArgs["minBond"];
   deadline: InitEscrowInstructionDataArgs["deadline"];
@@ -176,6 +231,11 @@ export async function getInitEscrowInstructionAsync<
   TAccountEscrow extends InstructionAccountInput,
   TAccountVault extends InstructionAccountInput,
   TAccountBond extends InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountBuyerTokenAccount extends InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof AESDR_PROGRAM_ADDRESS,
 >(
@@ -186,6 +246,11 @@ export async function getInitEscrowInstructionAsync<
     TAccountEscrow,
     TAccountVault,
     TAccountBond,
+    TAccountMint,
+    TAccountBuyerTokenAccount,
+    TAccountVaultAta,
+    TAccountTokenProgram,
+    TAccountAssociatedTokenProgram,
     TAccountSystemProgram
   >,
   config?: {
@@ -219,6 +284,26 @@ export async function getInitEscrowInstructionAsync<
       InstructionAccountInputAddress<TAccountBond>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBuyerTokenAccount,
+      InstructionAccountInputAddress<TAccountBuyerTokenAccount>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -246,6 +331,27 @@ export async function getInitEscrowInstructionAsync<
     escrow: { value: input.escrow ?? null, isSigner: false, isWritable: true },
     vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
     bond: { value: input.bond ?? null, isSigner: false, isWritable: false },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    buyerTokenAccount: {
+      value: input.buyerTokenAccount ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    vaultAta: {
+      value: input.vaultAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+    associatedTokenProgram: {
+      value: input.associatedTokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
     systemProgram: {
       value: input.systemProgram ?? null,
       isSigner: false,
@@ -302,6 +408,14 @@ export async function getInitEscrowInstructionAsync<
       { programAddress },
     );
   }
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+  if (!accounts.associatedTokenProgram.value) {
+    accounts.associatedTokenProgram.value =
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" as Address<"ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL">;
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -315,6 +429,11 @@ export async function getInitEscrowInstructionAsync<
       getAccountMeta("escrow", accounts.escrow),
       getAccountMeta("vault", accounts.vault),
       getAccountMeta("bond", accounts.bond),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("buyerTokenAccount", accounts.buyerTokenAccount),
+      getAccountMeta("vaultAta", accounts.vaultAta),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
+      getAccountMeta("associatedTokenProgram", accounts.associatedTokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getInitEscrowInstructionDataEncoder().encode(
@@ -348,6 +467,26 @@ export async function getInitEscrowInstructionAsync<
       InstructionAccountInputAddress<TAccountBond>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBuyerTokenAccount,
+      InstructionAccountInputAddress<TAccountBuyerTokenAccount>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -361,6 +500,14 @@ export type InitEscrowInput<
   TAccountEscrow extends InstructionAccountInput = InstructionAccountInput,
   TAccountVault extends InstructionAccountInput = InstructionAccountInput,
   TAccountBond extends InstructionAccountInput = InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountBuyerTokenAccount extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
@@ -368,11 +515,30 @@ export type InitEscrowInput<
   seller: TAccountSeller;
   arbiter: TAccountArbiter;
   escrow: TAccountEscrow;
-  /** Lamport vault. Must NOT be an existing populated account. */
+  /**
+   * Lamport vault. Also the authority of `vault_ata` for SPL escrows.
+   * Must NOT be an existing populated account.
+   */
   vault: TAccountVault;
   bond: TAccountBond;
+  /** Token mint. Only read for SPL escrows, so a SOL escrow passes `None`. */
+  mint?: TAccountMint;
+  /**
+   * Buyer's source token account. SPL escrows only; must be owned by the
+   * buyer and hold `mint`.
+   */
+  buyerTokenAccount?: TAccountBuyerTokenAccount;
+  /**
+   * Vault ATA, owned by the `vault` PDA. Must already exist for an SPL
+   * escrow: the buyer creates it in the same transaction, because the vault
+   * PDA cannot sign for its own account creation. Unused for lamports.
+   */
+  vaultAta?: TAccountVaultAta;
+  tokenProgram?: TAccountTokenProgram;
+  associatedTokenProgram?: TAccountAssociatedTokenProgram;
   systemProgram?: TAccountSystemProgram;
   sessionId: InitEscrowInstructionDataArgs["sessionId"];
+  asset: InitEscrowInstructionDataArgs["asset"];
   amount: InitEscrowInstructionDataArgs["amount"];
   minBond: InitEscrowInstructionDataArgs["minBond"];
   deadline: InitEscrowInstructionDataArgs["deadline"];
@@ -385,6 +551,11 @@ export function getInitEscrowInstruction<
   TAccountEscrow extends InstructionAccountInput,
   TAccountVault extends InstructionAccountInput,
   TAccountBond extends InstructionAccountInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountBuyerTokenAccount extends InstructionAccountInput,
+  TAccountVaultAta extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
+  TAccountAssociatedTokenProgram extends InstructionAccountInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof AESDR_PROGRAM_ADDRESS,
 >(
@@ -395,6 +566,11 @@ export function getInitEscrowInstruction<
     TAccountEscrow,
     TAccountVault,
     TAccountBond,
+    TAccountMint,
+    TAccountBuyerTokenAccount,
+    TAccountVaultAta,
+    TAccountTokenProgram,
+    TAccountAssociatedTokenProgram,
     TAccountSystemProgram
   >,
   config?: {
@@ -427,6 +603,26 @@ export function getInitEscrowInstruction<
     InstructionAccountInputAddress<TAccountBond>
   >,
   ResolvedInstructionAccountMeta<
+    TAccountMint,
+    InstructionAccountInputAddress<TAccountMint>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountBuyerTokenAccount,
+    InstructionAccountInputAddress<TAccountBuyerTokenAccount>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountVaultAta,
+    InstructionAccountInputAddress<TAccountVaultAta>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountTokenProgram,
+    InstructionAccountInputAddress<TAccountTokenProgram>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountAssociatedTokenProgram,
+    InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+  >,
+  ResolvedInstructionAccountMeta<
     TAccountSystemProgram,
     InstructionAccountInputAddress<TAccountSystemProgram>
   >
@@ -453,6 +649,27 @@ export function getInitEscrowInstruction<
     escrow: { value: input.escrow ?? null, isSigner: false, isWritable: true },
     vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
     bond: { value: input.bond ?? null, isSigner: false, isWritable: false },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    buyerTokenAccount: {
+      value: input.buyerTokenAccount ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    vaultAta: {
+      value: input.vaultAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+    associatedTokenProgram: {
+      value: input.associatedTokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
     systemProgram: {
       value: input.systemProgram ?? null,
       isSigner: false,
@@ -468,6 +685,14 @@ export function getInitEscrowInstruction<
   const args = { ...input };
 
   // Resolve default values.
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+  if (!accounts.associatedTokenProgram.value) {
+    accounts.associatedTokenProgram.value =
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" as Address<"ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL">;
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -481,6 +706,11 @@ export function getInitEscrowInstruction<
       getAccountMeta("escrow", accounts.escrow),
       getAccountMeta("vault", accounts.vault),
       getAccountMeta("bond", accounts.bond),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("buyerTokenAccount", accounts.buyerTokenAccount),
+      getAccountMeta("vaultAta", accounts.vaultAta),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
+      getAccountMeta("associatedTokenProgram", accounts.associatedTokenProgram),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
     data: getInitEscrowInstructionDataEncoder().encode(
@@ -514,6 +744,26 @@ export function getInitEscrowInstruction<
       InstructionAccountInputAddress<TAccountBond>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBuyerTokenAccount,
+      InstructionAccountInputAddress<TAccountBuyerTokenAccount>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVaultAta,
+      InstructionAccountInputAddress<TAccountVaultAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountAssociatedTokenProgram,
+      InstructionAccountInputAddress<TAccountAssociatedTokenProgram>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSystemProgram,
       InstructionAccountInputAddress<TAccountSystemProgram>
     >
@@ -530,10 +780,28 @@ export type ParsedInitEscrowInstruction<
     seller: TAccountMetas[1];
     arbiter: TAccountMetas[2];
     escrow: TAccountMetas[3];
-    /** Lamport vault. Must NOT be an existing populated account. */
+    /**
+     * Lamport vault. Also the authority of `vault_ata` for SPL escrows.
+     * Must NOT be an existing populated account.
+     */
     vault: TAccountMetas[4];
     bond: TAccountMetas[5];
-    systemProgram: TAccountMetas[6];
+    /** Token mint. Only read for SPL escrows, so a SOL escrow passes `None`. */
+    mint?: TAccountMetas[6] | undefined;
+    /**
+     * Buyer's source token account. SPL escrows only; must be owned by the
+     * buyer and hold `mint`.
+     */
+    buyerTokenAccount?: TAccountMetas[7] | undefined;
+    /**
+     * Vault ATA, owned by the `vault` PDA. Must already exist for an SPL
+     * escrow: the buyer creates it in the same transaction, because the vault
+     * PDA cannot sign for its own account creation. Unused for lamports.
+     */
+    vaultAta?: TAccountMetas[8] | undefined;
+    tokenProgram: TAccountMetas[9];
+    associatedTokenProgram: TAccountMetas[10];
+    systemProgram: TAccountMetas[11];
   };
   data: InitEscrowInstructionData;
 };
@@ -546,12 +814,12 @@ export function parseInitEscrowInstruction<
     InstructionWithAccounts<TAccountMetas> &
     InstructionWithData<ReadonlyUint8Array>,
 ): ParsedInitEscrowInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 7) {
+  if (instruction.accounts.length < 12) {
     throw new SolanaError(
       SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
       {
         actualAccountMetas: instruction.accounts.length,
-        expectedAccountMetas: 7,
+        expectedAccountMetas: 12,
       },
     );
   }
@@ -560,6 +828,12 @@ export function parseInitEscrowInstruction<
     const accountMeta = (instruction.accounts as TAccountMetas)[accountIndex]!;
     accountIndex += 1;
     return accountMeta;
+  };
+  const getNextOptionalAccount = () => {
+    const accountMeta = getNextAccount();
+    return accountMeta.address === AESDR_PROGRAM_ADDRESS
+      ? undefined
+      : accountMeta;
   };
   return {
     programAddress: instruction.programAddress,
@@ -570,6 +844,11 @@ export function parseInitEscrowInstruction<
       escrow: getNextAccount(),
       vault: getNextAccount(),
       bond: getNextAccount(),
+      mint: getNextOptionalAccount(),
+      buyerTokenAccount: getNextOptionalAccount(),
+      vaultAta: getNextOptionalAccount(),
+      tokenProgram: getNextAccount(),
+      associatedTokenProgram: getNextAccount(),
       systemProgram: getNextAccount(),
     },
     data: getInitEscrowInstructionDataDecoder().decode(instruction.data),
