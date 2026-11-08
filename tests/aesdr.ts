@@ -17,7 +17,9 @@ import { join } from "node:path";
 import {
   createKeyPairSignerFromBytes,
   createSolanaRpc,
+  fetchEncodedAccount,
   lamports,
+  type Address,
   type KeyPairSigner,
   type Rpc,
   type Signature,
@@ -25,7 +27,8 @@ import {
 } from "@solana/kit";
 import { assert } from "chai";
 
-import { Aesdr, EscrowState, sol } from "@aesdr/sdk";
+import { Aesdr, EscrowState, sol, usdc } from "@aesdr/sdk";
+import type { Asset } from "@aesdr/sdk";
 
 const RPC_URL = process.env.AESDR_RPC ?? "http://127.0.0.1:8899";
 const KEY_DIR = mkdtempSync(join(tmpdir(), "aesdr-prog-"));
@@ -33,12 +36,105 @@ const KEY_DIR = mkdtempSync(join(tmpdir(), "aesdr-prog-"));
 const rpc = createSolanaRpc(RPC_URL) as Rpc<SolanaRpcApi>;
 const aesdr = new Aesdr({ rpc });
 
-async function fundedSigner(name: string, amountSol = 5): Promise<KeyPairSigner> {
+/**
+ * Create a throwaway SPL mint, returning its address.
+ *
+ * Only needed for the SPL tests: on devnet the demo uses the official USDC
+ * mint, but a local validator has no USDC, so the tests mint their own.
+ */
+function createTestMint(): Address {
+  const out = spawnSync(
+    "spl-token",
+    [
+      "create-token",
+      "--url",
+      RPC_URL,
+      "--fee-payer",
+      `${process.env.HOME}/.config/solana/id.json`,
+    ],
+    { encoding: "utf8" }
+  );
+  if (out.status !== 0)
+    throw new Error(`spl-token create-token failed: ${out.stderr}`);
+  const mint = /Creating token (\w+)/.exec(out.stdout)?.[1];
+  if (!mint) throw new Error(`could not parse mint from: ${out.stdout}`);
+  return mint as Address;
+}
+
+/** Create an owner's ATA for a mint and return it. */
+function createAta(mint: Address, owner: Address): Address {
+  const out = spawnSync(
+    "spl-token",
+    [
+      "create-account",
+      String(mint),
+      "--url",
+      RPC_URL,
+      "--fee-payer",
+      `${process.env.HOME}/.config/solana/id.json`,
+      "--owner",
+      String(owner),
+    ],
+    { encoding: "utf8" }
+  );
+  if (out.status !== 0)
+    throw new Error(`spl-token create-account failed: ${out.stderr}`);
+  const ata = /Creating account (\w+)/.exec(out.stdout)?.[1];
+  if (!ata) throw new Error(`could not parse ATA from: ${out.stdout}`);
+  return ata as Address;
+}
+
+/**
+ * The buyer's ATA for a mint, created once and cached.
+ *
+ * `spl-token create-account` fails when the account already exists, so tests
+ * that need the same ATA twice must not call it again.
+ */
+const ataCache = new Map<string, Address>();
+/** Set in `before`; the ATA helper runs after signer setup. */
+let currentBuyer: Address | undefined;
+async function buyerAtaFor(mint: Address): Promise<Address> {
+  const cached = ataCache.get(String(mint));
+  if (cached) return cached;
+  const ata = createAta(mint, currentBuyer!);
+  ataCache.set(String(mint), ata);
+  return ata;
+}
+
+/** Mint test tokens into an ATA. */
+function mintTo(mint: Address, ata: Address, amount: number): void {
+  const out = spawnSync(
+    "spl-token",
+    [
+      "mint",
+      String(mint),
+      String(amount),
+      "--url",
+      RPC_URL,
+      "--fee-payer",
+      `${process.env.HOME}/.config/solana/id.json`,
+      String(ata),
+    ],
+    { encoding: "utf8" }
+  );
+  if (out.status !== 0) throw new Error(`spl-token mint failed: ${out.stderr}`);
+}
+
+async function fundedSigner(
+  name: string,
+  amountSol = 5
+): Promise<KeyPairSigner> {
   const path = join(KEY_DIR, `${name}.json`);
-  spawnSync("solana-keygen", ["new", "--no-bip39-passphrase", "-s", "-o", path, "--force"], {
-    stdio: "pipe",
-  });
-  const address = spawnSync("solana-keygen", ["pubkey", path], { encoding: "utf8" }).stdout.trim();
+  spawnSync(
+    "solana-keygen",
+    ["new", "--no-bip39-passphrase", "-s", "-o", path, "--force"],
+    {
+      stdio: "pipe",
+    }
+  );
+  const address = spawnSync("solana-keygen", ["pubkey", path], {
+    encoding: "utf8",
+  }).stdout.trim();
   const transfer = spawnSync(
     "solana",
     [
@@ -56,7 +152,9 @@ async function fundedSigner(name: string, amountSol = 5): Promise<KeyPairSigner>
   if (transfer.status !== 0) {
     throw new Error(`faucet transfer failed: ${transfer.stderr.toString()}`);
   }
-  return createKeyPairSignerFromBytes(new Uint8Array(JSON.parse(readFileSync(path, "utf8"))));
+  return createKeyPairSignerFromBytes(
+    new Uint8Array(JSON.parse(readFileSync(path, "utf8")))
+  );
 }
 
 /** Chain time, not wall time. */
@@ -70,11 +168,16 @@ async function chainNow(): Promise<number> {
  * The validator produces no idle slots, so its clock freezes between
  * transactions. Poll until the chain agrees, nudging with a no-op transfer.
  */
-async function waitForChainTime(target: number, timeoutMs = 90_000): Promise<void> {
+async function waitForChainTime(
+  target: number,
+  timeoutMs = 90_000
+): Promise<void> {
   const start = Date.now();
   while ((await chainNow()) < target) {
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`chain clock stuck at ${await chainNow()}, wanted ${target}`);
+      throw new Error(
+        `chain clock stuck at ${await chainNow()}, wanted ${target}`
+      );
     }
     await new Promise((r) => setTimeout(r, 1_000));
   }
@@ -96,6 +199,7 @@ describe("aesdr program", () => {
   let buyer: KeyPairSigner;
   let seller: KeyPairSigner;
   let arbiter: KeyPairSigner;
+  let testMint: Address;
 
   const AMOUNT = sol(0.01);
   const MIN_BOND = sol(0.02);
@@ -106,7 +210,15 @@ describe("aesdr program", () => {
     return bytes;
   };
 
-  const lock = (opts: { amount?: bigint; minBond?: bigint; deadlineSeconds?: number } = {}) =>
+  const lock = (
+    opts: {
+      amount?: bigint;
+      minBond?: bigint;
+      deadlineSeconds?: number;
+      asset?: Asset;
+      buyerTokenAccount?: Address;
+    } = {}
+  ) =>
     aesdr.lock({
       buyer,
       seller: seller.address,
@@ -115,6 +227,8 @@ describe("aesdr program", () => {
       amount: opts.amount ?? AMOUNT,
       minBond: opts.minBond ?? MIN_BOND,
       deadlineSeconds: opts.deadlineSeconds ?? 300,
+      asset: opts.asset,
+      buyerTokenAccount: opts.buyerTokenAccount,
     });
 
   before(async function () {
@@ -122,7 +236,16 @@ describe("aesdr program", () => {
     buyer = await fundedSigner("buyer");
     seller = await fundedSigner("seller");
     arbiter = await fundedSigner("arbiter", 2);
+    currentBuyer = buyer.address;
+    testMint = createTestMint();
     await aesdr.postBond({ seller, amount: MIN_BOND });
+  });
+
+  it("opens a lamport escrow even though SPL accounts are declared", async () => {
+    const { escrow } = await lock();
+    const view = await aesdr.read(escrow);
+    assert.equal(view!.asset, 0, "lamport escrow records asset 0");
+    assert.equal(view!.amount, AMOUNT);
   });
 
   it("posts a collateral bond as a bare system account", async () => {
@@ -147,7 +270,8 @@ describe("aesdr program", () => {
     assert.equal(view!.state, EscrowState.Open);
 
     const { value: vaultBalance } = await rpc.getBalance(vault).send();
-    assert.equal(vaultBalance, AMOUNT);  });
+    assert.equal(vaultBalance, AMOUNT);
+  });
 
   it("pays the seller on release, and drains the vault", async () => {
     const { escrow, vault } = await lock();
@@ -216,7 +340,120 @@ describe("aesdr program", () => {
 
     const buyerAfter = await rpc.getBalance(buyer.address).send();
     assert.equal(buyerAfter.value - buyerBefore.value, AMOUNT - fee);
-    assert.equal(await aesdr.bondBalance(seller.address), bondBefore, "reclaim is not a verdict");
+    assert.equal(
+      await aesdr.bondBalance(seller.address),
+      bondBefore,
+      "reclaim is not a verdict"
+    );
     assert.equal((await aesdr.read(escrow))!.state, EscrowState.Refunded);
+  });
+
+  // ------------------------------------------------------- SPL / USDC path
+
+  it("locks SPL tokens into the vault ATA and pays the seller on release", async () => {
+    const buyerAta = await buyerAtaFor(testMint);
+    mintTo(testMint, buyerAta, 1_000_000);
+
+    const TOKEN_AMOUNT = usdc(0.25);
+    const { escrow, vault } = await lock({
+      amount: TOKEN_AMOUNT,
+      minBond: MIN_BOND,
+      asset: { kind: "spl", mint: testMint },
+      buyerTokenAccount: buyerAta,
+    });
+
+    const view = await aesdr.read(escrow);
+    assert.equal(view!.asset, 1, "SPL escrow records asset 1");
+    assert.equal(view!.mint, testMint);
+    assert.equal(view!.amount, TOKEN_AMOUNT);
+
+    const { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS, fetchToken } =
+      await import("@solana-program/token");
+    const [vaultAta] = await findAssociatedTokenPda({
+      owner: vault,
+      mint: testMint,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    });
+    const vaultBalance = await fetchToken(rpc, vaultAta);
+    assert.equal(
+      vaultBalance.data.amount,
+      TOKEN_AMOUNT,
+      "vault ATA holds the lock"
+    );
+
+    const [sellerAta] = await findAssociatedTokenPda({
+      owner: seller.address,
+      mint: testMint,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    });
+    // The seller never created this account: settlement must create it in the
+    // same transaction, since a PDA cannot pay its own rent.
+    assert.isFalse((await fetchEncodedAccount(rpc, sellerAta)).exists);
+
+    await aesdr.release({ arbiter, escrow });
+
+    const paid = await fetchToken(rpc, sellerAta);
+    assert.equal(paid.data.amount, TOKEN_AMOUNT, "seller received the tokens");
+    assert.equal((await aesdr.read(escrow))!.state, EscrowState.Released);
+  });
+
+  it("refunds SPL tokens to the buyer on a breach verdict", async () => {
+    // Reuse the buyer's ATA: `create-account` is not idempotent.
+    const buyerAta = await buyerAtaFor(testMint);
+    mintTo(testMint, buyerAta, 1_000_000);
+
+    const TOKEN_AMOUNT = usdc(0.1);
+    const { escrow } = await lock({
+      amount: TOKEN_AMOUNT,
+      asset: { kind: "spl", mint: testMint },
+      buyerTokenAccount: buyerAta,
+    });
+
+    const { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS, fetchToken } =
+      await import("@solana-program/token");
+    const [buyerAtaAddr] = await findAssociatedTokenPda({
+      owner: buyer.address,
+      mint: testMint,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    });
+    const before = await fetchToken(rpc, buyerAtaAddr);
+
+    const bondBefore = await aesdr.bondBalance(seller.address);
+    await aesdr.refund({ arbiter, escrow });
+
+    const after = await fetchToken(rpc, buyerAtaAddr);
+    assert.equal(
+      after.data.amount - before.data.amount,
+      TOKEN_AMOUNT,
+      "tokens came back"
+    );
+    assert.isBelow(
+      Number(await aesdr.bondBalance(seller.address)),
+      Number(bondBefore),
+      "bond was slashed even though the escrow was a token"
+    );
+    assert.equal((await aesdr.read(escrow))!.state, EscrowState.Refunded);
+  });
+
+  it("rejects an SPL escrow whose source account holds the wrong mint", async () => {
+    // The breach test above slashed the bond, and the bond check runs before
+    // the mint check, so top the collateral back up to isolate this failure.
+    await aesdr.postBond({ seller, amount: MIN_BOND });
+
+    const otherMint = createTestMint();
+    const otherAta = await buyerAtaFor(otherMint);
+    mintTo(otherMint, otherAta, 1_000_000);
+
+    const err = await lock({
+      amount: usdc(0.1),
+      asset: { kind: "spl", mint: testMint },
+      buyerTokenAccount: otherAta,
+    }).then(
+      () => null,
+      (e: Error) => e
+    );
+
+    assert.isNotNull(err, "a mismatched source account must be rejected");
+    assert.match(err!.message, /MintMismatch|mint does not match/i);
   });
 });

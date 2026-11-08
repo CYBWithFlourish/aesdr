@@ -40,6 +40,7 @@ import {
   sha256Hex,
   sol,
   toAesdrError,
+  usdc,
 } from "@aesdr/sdk";
 
 const RPC_URL = process.env.AESDR_RPC ?? "http://127.0.0.1:8899";
@@ -48,14 +49,92 @@ const LOT = mkdtempSync(join(tmpdir(), "aesdr-keys-"));
 const rpc = createSolanaRpc(RPC_URL) as Rpc<SolanaRpcApi>;
 const aesdr = new Aesdr({ rpc });
 
-/** Generate a keypair with the CLI and fund it from the validator faucet. */
-async function fundedSigner(name: string, amountSol = 5): Promise<KeyPairSigner> {
-  const path = join(LOT, `${name}.json`);
-  spawnSync("solana-keygen", ["new", "--no-bip39-passphrase", "-s", "-o", path, "--force"], {
-    stdio: "pipe",
-  });
+/**
+ * Create a throwaway SPL mint and return its address.
+ *
+ * A local validator has no USDC, so the SPL tests mint their own. On devnet the
+ * demo uses the official USDC mint instead.
+ */
+function splMint(decimals = 6): Address {
+  const out = spawnSync(
+    "spl-token",
+    [
+      "create-token",
+      "--url",
+      RPC_URL,
+      "--decimals",
+      String(decimals),
+      "--fee-payer",
+      `${process.env.HOME}/.config/solana/id.json`,
+    ],
+    { encoding: "utf8" }
+  );
+  if (out.status !== 0)
+    throw new Error(`spl-token create-token failed: ${out.stderr}`);
+  const mint = /Creating token (\w+)/.exec(out.stdout)?.[1];
+  if (!mint) throw new Error(`could not parse mint from: ${out.stdout}`);
+  return mint as Address;
+}
 
-  const address = spawnSync("solana-keygen", ["pubkey", path], { encoding: "utf8" }).stdout.trim();
+/** Create an owner's ATA for a mint and return it. Fails if it exists. */
+function splAta(mint: Address, owner: Address): Address {
+  const out = spawnSync(
+    "spl-token",
+    [
+      "create-account",
+      String(mint),
+      "--url",
+      RPC_URL,
+      "--fee-payer",
+      `${process.env.HOME}/.config/solana/id.json`,
+      "--owner",
+      String(owner),
+    ],
+    { encoding: "utf8" }
+  );
+  if (out.status !== 0)
+    throw new Error(`spl-token create-account failed: ${out.stderr}`);
+  const ata = /Creating account (\w+)/.exec(out.stdout)?.[1];
+  if (!ata) throw new Error(`could not parse ATA from: ${out.stdout}`);
+  return ata as Address;
+}
+
+/** Mint test tokens into an ATA. */
+function splMintTo(mint: Address, ata: Address, amount: number): void {
+  const out = spawnSync(
+    "spl-token",
+    [
+      "mint",
+      String(mint),
+      String(amount),
+      "--url",
+      RPC_URL,
+      "--fee-payer",
+      `${process.env.HOME}/.config/solana/id.json`,
+      String(ata),
+    ],
+    { encoding: "utf8" }
+  );
+  if (out.status !== 0) throw new Error(`spl-token mint failed: ${out.stderr}`);
+}
+
+/** Generate a keypair with the CLI and fund it from the validator faucet. */
+async function fundedSigner(
+  name: string,
+  amountSol = 5
+): Promise<KeyPairSigner> {
+  const path = join(LOT, `${name}.json`);
+  spawnSync(
+    "solana-keygen",
+    ["new", "--no-bip39-passphrase", "-s", "-o", path, "--force"],
+    {
+      stdio: "pipe",
+    }
+  );
+
+  const address = spawnSync("solana-keygen", ["pubkey", path], {
+    encoding: "utf8",
+  }).stdout.trim();
 
   const transfer = spawnSync(
     "solana",
@@ -90,11 +169,16 @@ async function chainNow(): Promise<number> {
  * The validator produces no idle slots, so its clock freezes between
  * transactions. Nudge it forward until the chain agrees the deadline passed.
  */
-async function waitForChainTime(target: number, timeoutMs = 90_000): Promise<void> {
+async function waitForChainTime(
+  target: number,
+  timeoutMs = 90_000
+): Promise<void> {
   const start = Date.now();
   while ((await chainNow()) < target) {
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`chain clock stuck at ${await chainNow()}, wanted ${target}`);
+      throw new Error(
+        `chain clock stuck at ${await chainNow()}, wanted ${target}`
+      );
     }
     await new Promise((r) => setTimeout(r, 1_000));
   }
@@ -317,7 +401,11 @@ describe("aesdr program (via sdk)", () => {
     const fee = await feePaid(signature);
 
     const buyerAfter = await rpc.getBalance(buyer.address).send();
-    assert.equal(buyerAfter.value - buyerBefore.value, AMOUNT - fee, "full refund, no slash");
+    assert.equal(
+      buyerAfter.value - buyerBefore.value,
+      AMOUNT - fee,
+      "full refund, no slash"
+    );
     assert.equal(await aesdr.bondBalance(seller.address), bondBefore);
     assert.equal((await aesdr.read(escrow))!.state, EscrowState.Refunded);
   });
@@ -394,6 +482,84 @@ describe("sdk: verifyLock", () => {
     });
     assert.isFalse(wrong.valid);
   });
+
+  // A token escrow keeps its value in the vault's ATA, not in the vault PDA's
+  // lamports, so verification must look in the right place. Checking lamports
+  // here would reject every valid USDC payment.
+  it("verifies an SPL lock by reading the vault ATA, not vault lamports", async () => {
+    const mint = splMint();
+    const buyerAta = splAta(mint, buyer.address);
+    splMintTo(mint, buyerAta, 1_000_000);
+
+    const sessionId = newSession();
+    const amount = usdc(0.25);
+    const { signature, escrow } = await aesdr.lock({
+      buyer,
+      seller: seller.address,
+      arbiter: arbiter.address,
+      sessionId,
+      amount,
+      minBond: sol(0.02),
+      deadlineSeconds: 300,
+      asset: { kind: "spl", mint },
+      buyerTokenAccount: buyerAta,
+    });
+
+    const view = await aesdr.read(escrow);
+    assert.equal(view!.asset, 1);
+
+    const ok = await aesdr.verifyLock({
+      txSignature: signature,
+      sessionId,
+      buyer: buyer.address,
+      seller: seller.address,
+      expectedAmount: amount,
+      expectedAsset: { kind: "spl", mint },
+    });
+    assert.isTrue(ok.valid, ok.reason);
+
+    // The same number quoted in lamports must not pass as a token payment.
+    const wrongAsset = await aesdr.verifyLock({
+      txSignature: signature,
+      sessionId,
+      buyer: buyer.address,
+      seller: seller.address,
+      expectedAmount: amount,
+      expectedAsset: { kind: "lamports" },
+    });
+    assert.isFalse(wrongAsset.valid);
+    assert.match(wrongAsset.reason!, /expected lamports/);
+  });
+
+  it("rejects a lock that requested a different token than the price quoted", async () => {
+    const mint = splMint();
+    const otherMint = splMint();
+    const buyerAta = splAta(mint, buyer.address);
+    splMintTo(mint, buyerAta, 1_000_000);
+
+    const sessionId = newSession();
+    const { signature } = await aesdr.lock({
+      buyer,
+      seller: seller.address,
+      arbiter: arbiter.address,
+      sessionId,
+      amount: usdc(0.1),
+      minBond: sol(0.02),
+      deadlineSeconds: 300,
+      asset: { kind: "spl", mint },
+      buyerTokenAccount: buyerAta,
+    });
+
+    const wrong = await aesdr.verifyLock({
+      txSignature: signature,
+      sessionId,
+      buyer: buyer.address,
+      seller: seller.address,
+      expectedAsset: { kind: "spl", mint: otherMint },
+    });
+    assert.isFalse(wrong.valid);
+    assert.match(wrong.reason!, /expected token/);
+  });
 });
 
 describe("error decoding", () => {
@@ -403,14 +569,19 @@ describe("error decoding", () => {
   ];
 
   it("turns a program rejection into the program's own message", () => {
-    const err = toAesdrError({ context: { logs: anchorLogs } }) as AesdrTransactionError;
+    const err = toAesdrError({
+      context: { logs: anchorLogs },
+    }) as AesdrTransactionError;
     assert.instanceOf(err, AesdrTransactionError);
     assert.match(err.message, /Seller bond is smaller/);
     assert.equal(err.programError, AESDR_ERROR__BOND_TOO_SMALL);
   });
 
   it("reads the non-Anchor Custom(n) form too", () => {
-    assert.equal(parseCustomErrorCode(["Program log: Error: Custom(6007)"]), 6007);
+    assert.equal(
+      parseCustomErrorCode(["Program log: Error: Custom(6007)"]),
+      6007
+    );
   });
 
   it("does not claim an unrelated program error as its own", () => {
@@ -444,7 +615,11 @@ describe("x402 wire format", () => {
 
   it("rejects an unknown scheme rather than guessing", () => {
     const header = Buffer.from(
-      JSON.stringify({ x402Version: 1, scheme: "exact", payload: { txSignature: "x" } })
+      JSON.stringify({
+        x402Version: 1,
+        scheme: "exact",
+        payload: { txSignature: "x" },
+      })
     ).toString("base64");
     assert.throws(() => decodePayment(header), /unsupported scheme "exact"/);
   });
@@ -495,7 +670,10 @@ describe("verdict engine", () => {
   });
 
   it("flags malformed JSON", async () => {
-    assert.equal((await evaluate({ httpStatus: 200, body: "{ broken" })).reason, "schema");
+    assert.equal(
+      (await evaluate({ httpStatus: 200, body: "{ broken" })).reason,
+      "schema"
+    );
   });
 
   it("flags a body that does not match the seller's own commitment", async () => {
@@ -517,7 +695,11 @@ describe("verdict engine", () => {
     });
 
     assert.equal(verdict.outcome, "BREACH");
-    assert.equal(verdict.reason, "length", "checks 1-3 pass; only length catches this");
+    assert.equal(
+      verdict.reason,
+      "length",
+      "checks 1-3 pass; only length catches this"
+    );
     assert.isTrue(verdict.checks.slice(0, 3).every((c) => c.passed));
   });
 
@@ -544,6 +726,9 @@ describe("verdict engine", () => {
 
   it("skips the hash check when no commitment was supplied", async () => {
     const verdict = await evaluate({ httpStatus: 200, body: goodBody });
-    assert.match(verdict.checks.find((c) => c.name === "hash")!.detail, /skipped/);
+    assert.match(
+      verdict.checks.find((c) => c.name === "hash")!.detail,
+      /skipped/
+    );
   });
 });
