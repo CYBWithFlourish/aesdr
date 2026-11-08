@@ -1,3 +1,5 @@
+# Never format what we do not own, and never format build output.
+
 .anchor
 .DS_Store
 target
@@ -5,3 +7,25 @@ node_modules
 dist
 build
 test-ledger
+
+# Cargo build tree, when CARGO_TARGET_DIR is redirected off tmpfs.
+.cargo-target
+
+# Codama writes this tree from the Anchor IDL on every `npm run codegen`.
+# Formatting it creates a diff that the next codegen throws away, and a
+# `lint:fix` here would silently rewrite generated code.
+pkgs/client/src/generated
+
+# Next.js output, plus files it generates itself.
+app/.next
+app/next-env.d.ts
+app/AGENTS.md
+
+# Local secrets and demo state.
+app/.keys
+.env
+.env.*
+!app/.env.example
+
+# Lock files are machine-owned.
+package-lock.json

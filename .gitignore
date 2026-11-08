@@ -16,3 +16,15 @@ test-ledger
 # are rebuilt from src by `npm run build`, so compiled JS does not belong in git.
 pkgs/*/dist
 pkgs/*/*.tsbuildinfo
+
+# Next.js build output and local demo keys. The keys are generated on first run
+# and are only valid on a local validator, so they must never be committed.
+app/.next
+app/next-env.d.ts
+app/.keys
+app/AGENTS.md
+app/tsconfig.tsbuildinfo
+
+# Local demo state written by `npm run setup:demo`: the recorded USDC mint is
+# only meaningful against the validator that created it.
+app/.local-usdc-mint

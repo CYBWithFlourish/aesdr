@@ -3,14 +3,22 @@
   "private": true,
   "license": "GPL-3.0-only",
   "workspaces": [
-    "pkgs/*"
+    "pkgs/*",
+    "app"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "codegen": "node scripts/codegen.mjs",
+    "dev": "npm run dev --workspace @aesdr/app",
+    "start": "npm run start --workspace @aesdr/app",
+    "app:build": "npm run build --workspace @aesdr/app",
+    "e2e": "node --experimental-strip-types scripts/e2e-local.mts",
+    "e2e:sol": "AESDR_E2E_ASSET=lamports node --experimental-strip-types scripts/e2e-local.mts",
+    "setup:demo": "bash scripts/demo-setup.sh",
+    "setup:demo:rotate": "bash scripts/demo-setup.sh --override-keys",
     "test": "bash scripts/test-local.sh",
-    "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
-    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
+    "lint:fix": "prettier \"pkgs/*/src/**/*.ts\" \"app/src/**/*.{ts,tsx,css}\" \"tests/**/*.ts\" \"scripts/*.mjs\" -w",
+    "lint": "prettier \"pkgs/*/src/**/*.ts\" \"app/src/**/*.{ts,tsx,css}\" \"tests/**/*.ts\" \"scripts/*.mjs\" --check"
   },
   "devDependencies": {
     "@codama/nodes-from-anchor": "^1.5.6",
