@@ -43,7 +43,20 @@ export async function GET(): Promise<NextResponse> {
         },
         mint: session.mint ?? null,
         inputPreview: session.input.slice(0, 120),
-        paid: session.paid ?? null,
+        // `amount` is a bigint and `JSON.stringify` throws on those, so every
+        // bigint leaves this route as a string. Spreading `session.paid` here
+        // is what produced an empty 500 on the live deployment: the session
+        // list only worked while no session had been paid yet.
+        paid: session.paid
+          ? {
+              buyer: session.paid.buyer,
+              txSignature: session.paid.txSignature,
+              escrow: session.paid.escrow,
+              asset: session.paid.asset,
+              amount: String(session.paid.amount),
+              at: session.paid.at,
+            }
+          : null,
         delivery: session.delivery
           ? {
               payloadHash: session.delivery.payloadHash,
@@ -72,7 +85,6 @@ export async function GET(): Promise<NextResponse> {
 
   return NextResponse.json({ sessions: rows });
 }
-
 type SettleBody = {
   escrow?: unknown;
   /** Run the verdict and settle in one call. Omit to only inspect. */
@@ -149,7 +161,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   return NextResponse.json({
     outcome: verdict?.outcome ?? "BREACH",
-    reason: verdict?.reason ?? "no_delivery",
+    // A PASS has no reason; a BREACH with no verdict means nothing was
+    // delivered, which is a different story from a delivered-but-bad payload.
+    reason: verdict ? verdict.reason : "no_delivery",
     signature,
     escrow: view.address,
   });
