@@ -1,0 +1,36 @@
+{
+  "name": "@aesdr/app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference seller, buyer and arbiter consoles for AESDR escrow payments",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aesdr/client": "0.1.0",
+    "@aesdr/sdk": "0.1.0",
+    "@solana-program/token": "^0.18.0",
+    "@solana/kit": "^8.6.0",
+    "@solana/kit-plugin-rpc": "^0.23.0",
+    "@solana/react": "^8.6.0",
+    "@solana/wallet-standard-wallet-adapter-react": "^1.1.8",
+    "@wallet-standard/react": "^1.0.1",
+    "lucide-react": "^0.553.0",
+    "next": "^16.4.5",
+    "openai": "^7.53.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.7.3"
+  }
+}
