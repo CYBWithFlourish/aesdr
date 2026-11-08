@@ -186,6 +186,120 @@ The program ID lives in three places and they must agree:
 `anchor keys sync` fixes all three at once. After changing it, rerun
 `npm run codegen` so the generated client points at the new address.
 
+### Running the app locally, end to end
+
+One-time build first: the program `.so` and the package dists are both inputs.
+
+```bash
+anchor build && npm run build
+```
+
+Then the numbered path. Steps 1, 3 and 5 are long-running processes; keep each in
+its own terminal.
+
+**1. Start a validator with the program preloaded**
+
+```bash
+solana-test-validator --reset \
+  --bpf-program "$(node -e "console.log(require('./target/idl/aesdr.json').address)")" \
+  target/deploy/aesdr.so
+```
+
+`--reset` wipes balances, bonds and the local mint, so re-run step 4 after it.
+Key files survive.
+
+**2. Fund the payer**
+
+```bash
+solana -u http://127.0.0.1:8899 airdrop 10
+```
+
+**3. Configure and boot the app**
+
+```bash
+cp app/.env.example app/.env.local     # then set OPENAI_API_KEY
+npm install
+npm run dev                            # http://localhost:3000
+```
+
+Open the app once so it generates `app/.keys/seller.json` and
+`app/.keys/arbiter.json`. Those files are never overwritten: the addresses are
+baked into every escrow opened against them, so replacing one would make its
+history unsettleable. Rotate on purpose with `npm run setup:demo:rotate`.
+
+**4. Fund the roles, post the bond, create the local USDC mint**
+
+```bash
+npm run setup:demo
+```
+
+Expected output includes `created mint <addr>` and
+`wrote USDC_MINT=<addr> to app/.env.local`.
+
+Two things make this step matter more than it looks:
+
+- The mint is created against the **legacy** token program. `spl-token` 5.5
+  defaults to Token-2022, and the escrow program uses the legacy one, so a
+  2022 mint fails ATA creation with `IncorrectProgramId`. `scripts/local-usdc.mts`
+  passes the program id explicitly.
+- It records the mint in `app/.env.local`, which is the only reason the app can
+  quote a token that exists on this validator.
+
+**5. Restart `npm run dev`**
+
+Next reads env at boot, so the running server will not see `USDC_MINT`. Skip
+this and the app falls back to the devnet Circle mint, which this validator has
+never seen - the same `IncorrectProgramId` by a different route.
+
+**6. Run both payment paths headlessly**
+
+```bash
+npm run e2e:sol    # native SOL -> amount: 10000000 (lamports)
+npm run e2e        # USDC       -> amount: 250000 (local mint)
+```
+
+Both must pass. A SOL run that prints `amount: 10000000 (lamports)` and then
+`HTTP 200` at the retry is the proof that the price is checked against the
+currency actually locked, not against a single remembered amount.
+
+**7. Open the UI** at `http://127.0.0.1:3000`.
+
+### Testing without a wallet
+
+The wallet is only the buyer's signing key, so a keypair plays the same role.
+`scripts/e2e-local.mts` runs the entire flow headless: request a 402, lock funds
+in escrow, retry with `X-PAYMENT`, run the verdict, settle.
+
+Each run prints five stages. Read them as a check that the escrow is doing real
+work, not just returning 200:
+
+| Stage | What proves it worked |
+| --- | --- |
+| 1. quote | `HTTP 402`, plus the session id and the amount in the right unit |
+| 2. lock | an escrow address and a transaction signature |
+| 3. retry | `HTTP 200` and an `x-aesdr-payload-hash` header |
+| 4. verdict | an outcome and a reason |
+| 5. settle | the outcome, and a signature you can look up |
+
+Run it while the app is up and watch the browser. Open `/arbiter` in another tab
+and hit refresh: the session appears as it is quoted, then as the escrow opens,
+then as it settles. Every step the script prints is a chain transaction you can
+see reflected in the UI.
+
+Set `AESDR_BUYER_KEY` to use a different buyer, or `SELLER_FAULT=empty` in
+`app/.env.local` and restart to watch the seller breach and the arbiter refund
+instead of release.
+
+### When a step fails
+
+| Symptom | Cause |
+| --- | --- |
+| `IncorrectProgramId` at lock | The quoted mint is Token-2022 or a devnet address. Re-run step 4 and restart. |
+| `USDC_MINT is not set` | Step 5 was skipped; the server booted before the env was written. |
+| `locked N base units, expected M` | Amount and currency disagree. Should be unreachable now: the asset is read off chain before the price is chosen. |
+| `no validator at ...` | Step 1 is not up yet, or it exited. |
+| `start the app once so it generates ...` | Step 4 ran before step 3 ever served a request. |
+
 ---
 
 ## Client stack
@@ -279,7 +393,7 @@ Cutting the ZK path does not weaken the escrow. It replaces one trusted party (a
 programs/aesdr/src/
 ├── lib.rs                  entrypoints
 ├── constants.rs            seeds, states, slash basis points
-├── error.rs                11 typed errors
+├── error.rs                typed errors
 ├── state.rs                Escrow + 4 events
 ├── utils.rs                PDA transfer, signing seeds, slash math
 └── instructions/
@@ -288,6 +402,16 @@ programs/aesdr/src/
     ├── release.rs
     ├── refund.rs
     └── reclaim.rs
+
+pkgs/client/                Codama-generated Kit bindings
+pkgs/sdk/                   escrow client, x402 wire format, verdict engine
+app/                        Next.js 16 consoles and the paid API
+├── src/app/api/summarize/  the 402 endpoint, seller + arbiter in one route
+├── src/app/api/seller/     seller status and bond balance
+├── src/app/api/arbiter/    session list, verdict, settle
+├── src/app/seller/         seller console
+├── src/app/buyer/          buyer console, wallet-signed lock
+└── src/app/arbiter/        verdict and settlement console
 ```
 
 ## License
