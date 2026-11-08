@@ -27,6 +27,7 @@ import {
 import type { UiWalletAccount } from "@wallet-standard/react";
 
 import { buyWithEscrow, type BuyerAttempt } from "@/lib/buyer";
+import { networkName } from "@/lib/config";
 import { truncateAddress } from "@/lib/format";
 import { Chip, ErrorNote, Panel, Stat } from "@/components/ui";
 
@@ -64,9 +65,13 @@ export default function BuyerPage() {
 }
 
 function BuyerConsole({ account }: { account: UiWalletAccount }) {
+  // The chain has to match what the seller quotes, not the cluster the dev
+  // happened to run on: a wallet only signs for chains it advertises, and
+  // `solana:localnet` is never one of them on a hosted deploy. `networkName()`
+  // is the same helper the 402 challenge is built from, so the two cannot drift.
   const signer = useWalletAccountTransactionSendingSigner(
     account,
-    "solana:localnet"
+    networkName() as `solana:${string}`
   );
 
   const [input, setInput] = useState(SAMPLE);
