@@ -1,6 +1,8 @@
 .anchor
 .DS_Store
 target
+# Local Cargo target used when the default target dir lives on a small tmpfs.
+.cargo-target
 **/*.rs.bk
 node_modules
 test-ledger
