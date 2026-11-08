@@ -7,6 +7,7 @@ export type {
   KeyPairSigner,
   LockParams,
   Signature,
+  TransactionSigner,
 } from "./escrow";
 export {
   SOLANA_DEVNET_CAIP2,

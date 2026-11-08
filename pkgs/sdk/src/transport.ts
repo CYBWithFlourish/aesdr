@@ -1,11 +1,14 @@
 import {
   appendTransactionMessageInstructions,
   createTransactionMessage,
+  getBase58Decoder,
   getBase64EncodedWireTransaction,
   getSignatureFromTransaction,
+  isTransactionSendingSigner,
   pipe,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
+  signAndSendTransactionMessageWithSigners,
   signTransactionMessageWithSigners,
   type Address,
   type Instruction,
@@ -51,6 +54,12 @@ export async function signAndSend(
  * Escrow setup needs the token accounts to exist before the program can move
  * funds, so creation and payment travel together: either both land or neither
  * does, and a half-created escrow can never strand funds.
+ *
+ * Two signer styles are supported on purpose. A server-side keypair signs
+ * locally, so the SDK broadcasts and confirms. A browser wallet exposes a
+ * sending signer instead, which hands the whole message to the wallet and gets
+ * a signature back. Both end up here as a `TransactionSigner` so callers never
+ * branch on which one they hold.
  */
 export async function signAndSendAll(
   ctx: AesdrContext,
@@ -75,6 +84,19 @@ export async function signAndSendAll(
       return { ...m, instructions: fixed } as typeof m;
     }
   );
+
+  // A wallet signs and broadcasts in one step because it owns the keys.
+  if (isTransactionSendingSigner(payer)) {
+    try {
+      // The wallet returns raw bytes; the SDK speaks base58 signatures.
+      const bytes = await signAndSendTransactionMessageWithSigners(message);
+      return getBase58Decoder().decode(bytes) as Signature;
+    } catch (err) {
+      // The wallet surfaces its own rejection/cancel errors; only program
+      // failures carry the log context `toAesdrError` knows how to read.
+      throw toAesdrError(err);
+    }
+  }
 
   const signed = await signTransactionMessageWithSigners(message);
   const signature = getSignatureFromTransaction(signed);

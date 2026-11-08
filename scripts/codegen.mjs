@@ -24,7 +24,9 @@ if (!existsSync(idlPath)) {
 
 const idl = JSON.parse(readFileSync(idlPath, "utf8"));
 if (!idl.address) {
-  console.error("IDL has no program address - run `anchor keys sync` then `anchor build`");
+  console.error(
+    "IDL has no program address - run `anchor keys sync` then `anchor build`"
+  );
   process.exit(1);
 }
 

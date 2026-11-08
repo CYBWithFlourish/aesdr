@@ -36,7 +36,7 @@ import {
 import { signAndSendAll, type AesdrContext } from "./transport";
 
 export { EscrowState, STATE_LABEL };
-export type { Address, KeyPairSigner, Signature };
+export type { Address, KeyPairSigner, Signature, TransactionSigner };
 
 /** Lamports (native SOL) or an SPL token such as USDC. */
 export const ASSET_LAMPORTS = 0;
@@ -65,7 +65,11 @@ export type Asset =
 
 /** Everything needed to describe one paid session. */
 export type LockParams = {
-  buyer: KeyPairSigner;
+  /**
+   * The buyer. A server-side script passes a `KeyPairSigner`; a browser passes
+   * the sending signer a wallet hook returns. Both satisfy `TransactionSigner`.
+   */
+  buyer: TransactionSigner;
   seller: Address;
   arbiter: Address;
   /** 32-byte session nonce. */
@@ -128,7 +132,7 @@ export class Aesdr {
 
   /** Post or top up seller collateral. Required once before being payable. */
   async postBond(args: {
-    seller: KeyPairSigner;
+    seller: TransactionSigner;
     amount: bigint;
   }): Promise<Signature> {
     const instruction = await getPostBondInstructionAsync(
@@ -389,7 +393,7 @@ export class Aesdr {
 
   /** Verdict PASS: pay the seller. Only the arbiter can sign this. */
   async release(args: {
-    arbiter: KeyPairSigner;
+    arbiter: TransactionSigner;
     escrow: Address;
   }): Promise<Signature> {
     const view = await this.requireOpen(args.escrow);
@@ -425,7 +429,7 @@ export class Aesdr {
 
   /** Verdict BREACH: refund the buyer and slash 10% of the seller's bond. */
   async refund(args: {
-    arbiter: KeyPairSigner;
+    arbiter: TransactionSigner;
     escrow: Address;
   }): Promise<Signature> {
     const view = await this.requireOpen(args.escrow);
@@ -466,7 +470,7 @@ export class Aesdr {
 
   /** Deadline escape hatch: the buyer needs nobody's cooperation. */
   async reclaim(args: {
-    buyer: KeyPairSigner;
+    buyer: TransactionSigner;
     escrow: Address;
   }): Promise<Signature> {
     const view = await this.requireOpen(args.escrow);

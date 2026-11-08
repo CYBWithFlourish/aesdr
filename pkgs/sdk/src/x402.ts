@@ -17,28 +17,44 @@ export type AesdrScheme = typeof SCHEME;
 
 export type Network = "solana-devnet" | "solana-mainnet" | (string & {});
 
+export type Extra = {
+  programId: string;
+  /** Key that signs `release` / `refund`. The future ZK verifier seat. */
+  arbiter: string;
+  /**
+   * The seller being paid. Not where funds go (`payTo` is the vault), but the
+   * buyer needs it to derive the escrow PDA, so it travels with the quote
+   * instead of being assumed.
+   */
+  seller?: string;
+  /** Collateral the seller must have posted, in lamports. */
+  minBond: string;
+  /** Seconds from now until the buyer may reclaim unilaterally. */
+  deadlineSeconds: number;
+  /** 32-byte session nonce, hex encoded. Scopes the escrow PDA. */
+  sessionId: string;
+};
+
 /** One acceptable way to pay. Mirrors x402's `accepts[]` entry. */
 export type PaymentRequirements = {
   scheme: AesdrScheme;
   network: Network;
   /** Price in lamports, decimal string. x402 uses strings to avoid float drift. */
   maxAmountRequired: string;
-  /** The vault PDA that receives the lock, not the seller's wallet. */
+  /**
+   * The seller being paid.
+   *
+   * Not the destination of the transfer: the vault is a PDA derived from
+   * buyer + seller + session, so its address cannot exist before the buyer is
+   * known. The buyer derives it, and this field is what it derives from.
+   */
   payTo: string;
   /** Route being paid for. */
   resource: string;
   description?: string;
-  extra: {
-    programId: string;
-    /** Key that signs `release` / `refund`. The future ZK verifier seat. */
-    arbiter: string;
-    /** Collateral the seller must have posted, in lamports. */
-    minBond: string;
-    /** Seconds from now until the buyer may reclaim unilaterally. */
-    deadlineSeconds: number;
-    /** 32-byte session nonce, hex encoded. Scopes the escrow PDA. */
-    sessionId: string;
-  };
+  /** Asset identifier. CAIP-19 style, or "lamports" for native SOL. */
+  asset?: string;
+  extra: Extra;
 };
 
 /** The body a seller returns with `HTTP 402 Payment Required`. */
@@ -67,8 +83,11 @@ export function buildChallenge(args: {
   payTo: string;
   resource: string;
   description?: string;
+  /** CAIP-19 asset id, or "lamports" for native SOL. */
+  asset?: string;
   programId: string;
   arbiter: string;
+  seller?: string;
   minBond: bigint | number | string;
   deadlineSeconds: number;
   sessionId: string;
@@ -84,9 +103,11 @@ export function buildChallenge(args: {
         payTo: args.payTo,
         resource: args.resource,
         ...(args.description ? { description: args.description } : {}),
+        ...(args.asset ? { asset: args.asset } : {}),
         extra: {
           programId: args.programId,
           arbiter: args.arbiter,
+          ...(args.seller ? { seller: args.seller } : {}),
           minBond: String(args.minBond),
           deadlineSeconds: args.deadlineSeconds,
           sessionId: args.sessionId,
@@ -117,9 +138,12 @@ export function decodePayment(header: string): PaymentPayload {
   const p = parsed as Partial<PaymentPayload>;
   if (p.x402Version !== 1) throw new Error("x402: unsupported x402Version");
   if (p.scheme !== SCHEME) {
-    throw new Error(`x402: unsupported scheme "${String(p.scheme)}", expected "${SCHEME}"`);
+    throw new Error(
+      `x402: unsupported scheme "${String(p.scheme)}", expected "${SCHEME}"`
+    );
   }
-  if (!p.payload?.txSignature) throw new Error("x402: payload.txSignature is required");
+  if (!p.payload?.txSignature)
+    throw new Error("x402: payload.txSignature is required");
 
   return p as PaymentPayload;
 }
@@ -130,7 +154,8 @@ export function newSessionId(): string {
   if (typeof globalThis.crypto?.getRandomValues === "function") {
     globalThis.crypto.getRandomValues(bytes);
   } else {
-    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    for (let i = 0; i < bytes.length; i++)
+      bytes[i] = Math.floor(Math.random() * 256);
   }
   return hexEncode(bytes);
 }

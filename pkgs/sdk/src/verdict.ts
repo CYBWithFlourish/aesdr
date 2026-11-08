@@ -71,7 +71,9 @@ export async function evaluate(input: VerdictInput): Promise<Verdict> {
   checks.push({
     name: "status",
     passed: statusOk,
-    detail: statusOk ? `HTTP ${input.httpStatus}` : `seller returned HTTP ${input.httpStatus}`,
+    detail: statusOk
+      ? `HTTP ${input.httpStatus}`
+      : `seller returned HTTP ${input.httpStatus}`,
   });
   if (!statusOk) return finish(checks, payloadHash);
 
@@ -107,7 +109,10 @@ export async function evaluate(input: VerdictInput): Promise<Verdict> {
       passed: hashOk,
       detail: hashOk
         ? "response matches the seller's commitment"
-        : `committed ${expected.slice(0, 12)}… but received ${payloadHash.slice(0, 12)}…`,
+        : `committed ${expected.slice(0, 12)}… but received ${payloadHash.slice(
+            0,
+            12
+          )}…`,
     });
     if (!hashOk) return finish(checks, payloadHash);
   } else {
@@ -130,7 +135,9 @@ export async function evaluate(input: VerdictInput): Promise<Verdict> {
     passed: lengthOk,
     detail: lengthOk
       ? `${textKey} is ${text.trim().length} chars (min ${minLength})`
-      : `${textKey} is ${text.trim().length} chars, below the ${minLength} minimum`,
+      : `${textKey} is ${
+          text.trim().length
+        } chars, below the ${minLength} minimum`,
   });
   if (!lengthOk) return finish(checks, payloadHash);
 
@@ -140,7 +147,9 @@ export async function evaluate(input: VerdictInput): Promise<Verdict> {
     let detail = "quality check failed";
     try {
       passed = await input.qualityCheck(input.body);
-      detail = passed ? "quality check passed" : "quality check rejected the payload";
+      detail = passed
+        ? "quality check passed"
+        : "quality check rejected the payload";
     } catch (err) {
       detail = `quality check threw: ${(err as Error).message}`;
     }
