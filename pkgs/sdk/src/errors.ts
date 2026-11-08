@@ -6,7 +6,10 @@ import {
   AESDR_ERROR__INVALID_AMOUNT,
   AESDR_ERROR__INVALID_BOND,
   AESDR_ERROR__INVALID_DEADLINE,
+  AESDR_ERROR__INVALID_ASSET,
   AESDR_ERROR__INVALID_SESSION_ID,
+  AESDR_ERROR__MINT_MISMATCH,
+  AESDR_ERROR__MISSING_TOKEN_ACCOUNTS,
   AESDR_ERROR__OVERFLOW,
   AESDR_ERROR__SELF_DEALING,
   AESDR_ERROR__UNAUTHORIZED,
@@ -32,6 +35,9 @@ const KNOWN_ERRORS: ReadonlySet<number> = new Set<number>([
   AESDR_ERROR__INVALID_SESSION_ID,
   AESDR_ERROR__SELF_DEALING,
   AESDR_ERROR__OVERFLOW,
+  AESDR_ERROR__INVALID_ASSET,
+  AESDR_ERROR__MISSING_TOKEN_ACCOUNTS,
+  AESDR_ERROR__MINT_MISMATCH,
 ]);
 
 /**
@@ -91,7 +97,9 @@ export function toAesdrError(err: unknown, signature?: string): unknown {
   }
 
   const isOurs = KNOWN_ERRORS.has(code);
-  const detail = isOurs ? getAesdrErrorMessage(code as AesdrError) : `program error ${code}`;
+  const detail = isOurs
+    ? getAesdrErrorMessage(code as AesdrError)
+    : `program error ${code}`;
 
   return new AesdrTransactionError(
     `aesdr rejected the transaction: ${detail} (code ${code})`,
@@ -107,11 +115,13 @@ function extractLogs(err: unknown): string[] {
   const context = (err as { context?: unknown }).context;
   if (typeof context === "object" && context !== null) {
     const logs = (context as { logs?: unknown }).logs;
-    if (Array.isArray(logs)) return logs.filter((l): l is string => typeof l === "string");
+    if (Array.isArray(logs))
+      return logs.filter((l): l is string => typeof l === "string");
   }
 
   // Some failures nest program logs inside a simulation result.
-  const sim = (err as { simulationResult?: { logs?: unknown } }).simulationResult;
+  const sim = (err as { simulationResult?: { logs?: unknown } })
+    .simulationResult;
   if (sim && Array.isArray(sim.logs)) {
     return sim.logs.filter((l): l is string => typeof l === "string");
   }

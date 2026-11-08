@@ -1,8 +1,28 @@
 export { Aesdr, EscrowState, STATE_LABEL } from "./escrow";
-export type { Address, EscrowView, KeyPairSigner, LockParams, Signature } from "./escrow";
+export { ASSET_LAMPORTS, ASSET_SPL } from "./escrow";
+export type {
+  Address,
+  Asset,
+  EscrowView,
+  KeyPairSigner,
+  LockParams,
+  Signature,
+} from "./escrow";
+export {
+  SOLANA_DEVNET_CAIP2,
+  SOLANA_MAINNET_CAIP2,
+  USDC_DECIMALS,
+  USDC_DEVNET_MINT,
+  USDC_MAINNET_MINT,
+  usdc,
+} from "./assets";
 export type { AesdrContext } from "./transport";
 export { signAndSend, sol } from "./transport";
-export { AesdrTransactionError, parseCustomErrorCode, toAesdrError } from "./errors";
+export {
+  AesdrTransactionError,
+  parseCustomErrorCode,
+  toAesdrError,
+} from "./errors";
 export { evaluate, sha256Hex } from "./verdict";
 export type { CheckName, CheckResult, Verdict, VerdictInput } from "./verdict";
 export {

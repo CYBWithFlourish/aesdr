@@ -1,5 +1,5 @@
 import {
-  appendTransactionMessageInstruction,
+  appendTransactionMessageInstructions,
   createTransactionMessage,
   getBase64EncodedWireTransaction,
   getSignatureFromTransaction,
@@ -42,6 +42,23 @@ export async function signAndSend(
   instruction: Instruction,
   payer: TransactionSigner
 ): Promise<Signature> {
+  return signAndSendAll(ctx, [instruction], payer);
+}
+
+/**
+ * Send several instructions in one atomic transaction and confirm it.
+ *
+ * Escrow setup needs the token accounts to exist before the program can move
+ * funds, so creation and payment travel together: either both land or neither
+ * does, and a half-created escrow can never strand funds.
+ */
+export async function signAndSendAll(
+  ctx: AesdrContext,
+  instructions: Instruction[],
+  payer: TransactionSigner
+): Promise<Signature> {
+  const normalized = instructions.map(normalizeOptionalPlaceholders);
+
   const { value: latestBlockhash } = await ctx.rpc
     .getLatestBlockhash({ commitment: "confirmed" })
     .send();
@@ -50,7 +67,13 @@ export async function signAndSend(
     createTransactionMessage({ version: 0 }),
     (m) => setTransactionMessageFeePayerSigner(payer, m),
     (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
-    (m) => appendTransactionMessageInstruction(instruction, m)
+    (m) => appendTransactionMessageInstructions(normalized, m),
+    (m) => {
+      // Kit validates that the program address is never writable at compile
+      // time, including inside lookup tables, so normalize the metas here too.
+      const fixed = m.instructions.map(normalizeOptionalPlaceholders);
+      return { ...m, instructions: fixed } as typeof m;
+    }
   );
 
   const signed = await signTransactionMessageWithSigners(message);
@@ -103,7 +126,9 @@ async function waitForSignature(
     await sleep(1_000);
   }
 
-  throw new Error(`transaction ${signature} was not confirmed within ${timeoutMs}ms`);
+  throw new Error(
+    `transaction ${signature} was not confirmed within ${timeoutMs}ms`
+  );
 }
 
 async function explainLandedFailure(
@@ -127,6 +152,33 @@ async function explainLandedFailure(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Strip writability from optional-account placeholders.
+ *
+ * An absent optional account is passed as the program's own address, which is
+ * how Anchor encodes `None`. Kit rejects a message where that address is both
+ * invoked and writable, so the meta is rewritten read-only. This is safe: the
+ * Anchor runtime compares against the program id only, ignores the flags for
+ * this case, and maps it to `None` either way.
+ */
+function normalizeOptionalPlaceholders(
+  instruction: Instruction & { programAddress?: string }
+): Instruction {
+  const programId = String(instruction.programAddress ?? "");
+  if (!programId) return instruction;
+
+  let changed = false;
+  const accounts = instruction.accounts?.map((account) => {
+    if (String(account.address) !== programId) return account;
+    // AccountRole.WRITABLE is 1; AccountRole.WRITABLE_SIGNER is 3.
+    if (account.role !== 1 && account.role !== 3) return account;
+    changed = true;
+    return { ...account, role: account.role === 3 ? 2 : 0 };
+  });
+
+  return changed ? ({ ...instruction, accounts } as Instruction) : instruction;
 }
 
 /**
