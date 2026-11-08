@@ -9,6 +9,12 @@
 
 ---
 
+[![AESDR demo: one escrow-backed request, end to end on devnet](assets/aesdr-demo.gif)](assets/aesdr-demo.mp4)
+
+*One paid request, end to end, against the devnet deployment: the seller's terms, an unpaid request refused with a 402, an escrow lock, delivery, the arbiter's verdict, settlement, and the settled account read back off the chain. Click for the full-quality [MP4](assets/aesdr-demo.mp4).*
+
+---
+
 ## The gap
 
 x402 and MPP standardize the handshake: a seller answers `HTTP 402 Payment Required`, the agent retries with a `X-PAYMENT` header, money moves. They solve **negotiation**.
