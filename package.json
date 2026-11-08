@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "postinstall": "npm run build --workspace @aesdr/client && npm run build --workspace @aesdr/sdk",
     "codegen": "node scripts/codegen.mjs",
     "dev": "npm run dev --workspace @aesdr/app",
     "start": "npm run start --workspace @aesdr/app",

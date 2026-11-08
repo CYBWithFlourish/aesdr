@@ -85,6 +85,18 @@ async function loadSigner(role: "seller" | "arbiter"): Promise<KeyPairSigner> {
     );
   }
 
+  // A hosted deployment has no writable disk and no stable identity between
+  // instances, so generating a key there is worse than failing: each cold start
+  // would answer with a different seller address, orphaning every escrow that
+  // was opened against the previous one. Require an explicit key instead.
+  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+    throw new Error(
+      `${envVar} is required. A hosted deploy cannot generate a local key: ` +
+        `the filesystem is read-only and each instance would get a different ` +
+        `address. Set it to a base58 secret key you control.`
+    );
+  }
+
   // Dev fallback: 32 random bytes saved beside the app, so restarts keep the
   // same address. Clearly local-only rather than silently ephemeral.
   const seed = randomBytes(32);
