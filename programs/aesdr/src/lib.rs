@@ -27,14 +27,20 @@ pub mod aesdr {
     }
 
     /// Buyer locks funds into a vault for one paid session.
+    ///
+    /// `asset` is 0 for SOL (lamports) or 1 for an SPL token. SPL escrows also
+    /// need the mint, the buyer's source account and the vault ATA.
     pub fn init_escrow(
         ctx: Context<InitEscrow>,
         session_id: [u8; 32],
+        asset: u8,
         amount: u64,
         min_bond: u64,
         deadline: i64,
     ) -> Result<()> {
-        instructions::init_escrow::handle_init_escrow(ctx, session_id, amount, min_bond, deadline)
+        instructions::init_escrow::handle_init_escrow(
+            ctx, session_id, asset, amount, min_bond, deadline,
+        )
     }
 
     /// Arbiter verdict: delivery confirmed, pay the seller.

@@ -34,4 +34,13 @@ pub enum AesdrError {
 
     #[msg("Arithmetic overflow")]
     Overflow,
+
+    #[msg("Escrow asset must be lamports (0) or SPL (1)")]
+    InvalidAsset,
+
+    #[msg("This escrow needs token accounts that were not supplied")]
+    MissingTokenAccounts,
+
+    #[msg("Token mint does not match the escrow's mint")]
+    MintMismatch,
 }

@@ -19,7 +19,12 @@ pub struct Escrow {
     pub arbiter: Pubkey,
     /// Client-generated id, makes escrows unique per request.
     pub session_id: [u8; 32],
-    /// Lamports locked by the buyer.
+    /// Currency of `amount`: `ASSET_LAMPORTS` (SOL) or `ASSET_SPL` (a token).
+    pub asset: u8,
+    /// SPL mint when `asset == ASSET_SPL`; `Pubkey::default()` for lamports.
+    /// The mint is stored so settlement cannot be redirected to another token.
+    pub mint: Pubkey,
+    /// Lamports locked by the buyer, or token base units when `asset == ASSET_SPL`.
     pub amount: u64,
     /// Seller collateral that must be posted before the escrow opens.
     pub min_bond: u64,
@@ -37,6 +42,11 @@ impl Escrow {
     pub fn is_open(&self) -> bool {
         self.state == crate::constants::STATE_OPEN
     }
+
+    /// True when the escrow is denominated in an SPL token rather than lamports.
+    pub fn is_spl(&self) -> bool {
+        self.asset == crate::constants::ASSET_SPL
+    }
 }
 
 /// Emitted on every state transition so the UI can rebuild the timeline
@@ -47,6 +57,8 @@ pub struct EscrowOpened {
     pub buyer: Pubkey,
     pub seller: Pubkey,
     pub session_id: [u8; 32],
+    pub asset: u8,
+    pub mint: Pubkey,
     pub amount: u64,
     pub min_bond: u64,
     pub deadline: i64,

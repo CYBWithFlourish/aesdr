@@ -15,6 +15,11 @@ pub const VAULT_SEED: &[u8] = b"vault";
 #[constant]
 pub const BOND_SEED: &[u8] = b"bond";
 
+/// Escrow is denominated in native lamports (SOL).
+pub const ASSET_LAMPORTS: u8 = 0;
+/// Escrow is denominated in an SPL token (e.g. USDC).
+pub const ASSET_SPL: u8 = 1;
+
 /// Escrow is open, funds are locked and awaiting a verdict.
 pub const STATE_OPEN: u8 = 0;
 /// Arbiter released the funds to the seller. Terminal.
