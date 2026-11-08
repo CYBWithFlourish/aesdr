@@ -290,6 +290,158 @@ Set `AESDR_BUYER_KEY` to use a different buyer, or `SELLER_FAULT=empty` in
 `app/.env.local` and restart to watch the seller breach and the arbiter refund
 instead of release.
 
+---
+
+## A settled run, on devnet, in full
+
+One real USDC request against the deployed program, followed from the 402 to the
+transfer. Every figure below is read from chain, not from the app's own logs.
+
+**Deployment**
+
+| | |
+| --- | --- |
+| App | https://cybwfaesdr.vercel.app |
+| Cluster | devnet |
+| Program | `82Tq33Ekqk1TYrruXgpiPtLgoTM2Fjo8VEmpkzcF4BTD` |
+| Program explorer | [solscan](https://solscan.io/account/82Tq33Ekqk1TYrruXgpiPtLgoTM2Fjo8VEmpkzcF4BTD?cluster=devnet) · [explorer](https://explorer.solana.com/address/82Tq33Ekqk1TYrruXgpiPtLgoTM2Fjo8VEmpkzcF4BTD?cluster=devnet) |
+
+**The parties**
+
+| Role | Address | Explorer |
+| --- | --- | --- |
+| Buyer wallet | `EugCxkbAwPjokiuEeSkGA6QNhNyykCpemLpLEoNTAEM1` | [solscan](https://solscan.io/account/EugCxkbAwPjokiuEeSkGA6QNhNyykCpemLpLEoNTAEM1?cluster=devnet) |
+| Buyer USDC account | `93CJGCWmB7EeexVwQTyMrFWhfisXRUwz6Mxvy1knRTjg` | [solscan](https://solscan.io/account/93CJGCWmB7EeexVwQTyMrFWhfisXRUwz6Mxvy1knRTjg?cluster=devnet) |
+| Seller wallet | `3KB7Un58JZcxZouy8wx63wLdqjNNmzwpD3rAxqTHNMRk` | [solscan](https://solscan.io/account/3KB7Un58JZcxZouy8wx63wLdqjNNmzwpD3rAxqTHNMRk?cluster=devnet) |
+| Seller USDC account | `BBTccdY6rGEzsb6eJV2KwqjJrpXfJv6kP93hej1Kcde3` | [solscan](https://solscan.io/account/BBTccdY6rGEzsb6eJV2KwqjJrpXfJv6kP93hej1Kcde3?cluster=devnet) |
+| Arbiter | `FL7yPDgAiZDXm56n2Usm6ghLoaeSYjtohw1bPfkSNn9D` | [solscan](https://solscan.io/account/FL7yPDgAiZDXm56n2Usm6ghLoaeSYjtohw1bPfkSNn9D?cluster=devnet) |
+| Escrow PDA | `BYcrK73Sw1Kwd7r574uCE3ACFjeCBChhSNh2RDZqk5dj` | [solscan](https://solscan.io/account/BYcrK73Sw1Kwd7r574uCE3ACFjeCBChhSNh2RDZqk5dj?cluster=devnet) |
+| Vault PDA † | `8WX5XpWsVaAiPkxu9xYh7R8Rk6pbqvjKrXvcqwZ24KFR` | [solscan](https://solscan.io/account/8WX5XpWsVaAiPkxu9xYh7R8Rk6pbqvjKrXvcqwZ24KFR?cluster=devnet) |
+| Vault USDC account | `4fUCa9zwQzDijYJwduag1EmZUxRz4VgDaKh4vkRXVWnY` | [solscan](https://solscan.io/account/4fUCa9zwQzDijYJwduag1EmZUxRz4VgDaKh4vkRXVWnY?cluster=devnet) |
+| Bond PDA | `Gdcdd9zfLzDKvGiQv9hikEdFPc1ChgkV43QtAai1jbub` | [solscan](https://solscan.io/account/Gdcdd9zfLzDKvGiQv9hikEdFPc1ChgkV43QtAai1jbub?cluster=devnet) |
+| USDC mint | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` | [solscan](https://solscan.io/account/4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU?cluster=devnet) |
+
+† The vault is derived from the escrow, so it exists only while funds are
+locked. It is purged when settlement drains it, and that link will show nothing
+now. Its token account persists at zero.
+
+Wallet and token account are different things. A USDC transfer must name the
+*token account*, which is a PDA over `(wallet, mint, token program)`. Sending
+USDC to a wallet address is rejected by the token program, which is the most
+common way to lose an afternoon here.
+
+### The run
+
+```
+1. quote -> HTTP 402
+   session: 423b7ad0364a955e9808b2e48244350b456b9ff568e8b11efda958ebc3c0e2a8
+   amount:  250000 (solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1/token:4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU)
+
+2. locking in escrow
+   escrow: BYcrK73Sw1Kwd7r574uCE3ACFjeCBChhSNh2RDZqk5dj
+   tx:     5U1EHQDKiXGew46DqrWkxhbzZJNWprvWUKDFF8pvAhCZrrfEBANQwCsACzifFRToGGuNoePDavm9Y4h6UYadB5pe
+
+3. retrying with X-PAYMENT
+   status:  HTTP 200
+   hash:    8337e8a885dcb419ffe2c5af2e1bab39464ae6549316cf9bacb1cdf7a98da74b
+
+4. arbiter verdict (inspect only)   outcome: PASS
+
+5. settling
+   tx:      5jUVad7LKvuprW2jvEf5FqrbbVsfXmcxtmFHituvjF6SEgHS2PbqxvsYwzjREMtG9AHwFPMVekwkh1Bo8SqXKnZC
+   escrow is now: RELEASED
+```
+
+`250000` is base units. USDC has six decimals, so the price is **0.25 USDC**.
+
+### Step 2 - the lock
+
+[`5U1EHQDK...h6UYadB5pe`](https://solscan.io/tx/5U1EHQDKiXGew46DqrWkxhbzZJNWprvWUKDFF8pvAhCZrrfEBANQwCsACzifFRToGGuNoePDavm9Y4h6UYadB5pe?cluster=devnet)
+· [explorer](https://explorer.solana.com/tx/5U1EHQDKiXGew46DqrWkxhbzZJNWprvWUKDFF8pvAhCZrrfEBANQwCsACzifFRToGGuNoePDavm9Y4h6UYadB5pe?cluster=devnet)
+
+Signed by the **buyer**, who pays the fee. Slot `520094964`, fee `0.000005` SOL.
+
+| Account | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| Buyer wallet (SOL) | 1.985219880 | 1.982085600 | **-0.003134280** |
+| Vault USDC account (SOL) | 0 | 0.001488440 | +0.001488440 |
+| Escrow PDA (SOL) | 0 | 0.001640840 | +0.001640840 |
+
+| Token account | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| Buyer `93CJGC...` (USDC) | 19.75 | 19.50 | **-0.25** |
+| Vault `4fUCa9z...` (USDC) | 0.00 | 0.25 | **+0.25** |
+
+The buyer's USDC has left its wallet but reached nobody. The two SOL amounts are
+rent to create the escrow PDA and the vault's token account, both paid by the
+buyer because both accounts are created by this transaction.
+
+### Step 3 - the delivery
+
+The seller re-derives the escrow from `(buyer, seller, session)`, reads the
+asset the program recorded, and only then checks the price against the quote for
+that currency. It returns the payload with `x-aesdr-payload-hash`, a commitment
+the arbiter will later compare against.
+
+### Step 5 - the settle
+
+[`5jUVad7L...8SqXKnZC`](https://solscan.io/tx/5jUVad7LKvuprW2jvEf5FqrbbVsfXmcxtmFHituvjF6SEgHS2PbqxvsYwzjREMtG9AHwFPMVekwkh1Bo8SqXKnZC?cluster=devnet)
+· [explorer](https://explorer.solana.com/tx/5jUVad7LKvuprW2jvEf5FqrbbVsfXmcxtmFHituvjF6SEgHS2PbqxvsYwzjREMtG9AHwFPMVekwkh1Bo8SqXKnZC?cluster=devnet)
+
+Signed by the **arbiter**. Slot `520094996`, fee `0.000005` SOL.
+
+| Account | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| Arbiter wallet (SOL) | 1.998501560 | 1.998496560 | -0.000005000 |
+| Vault USDC account (SOL) | 0.001488440 | 0.001488440 | 0 |
+
+| Token account | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| Vault `4fUCa9z...` (USDC) | 0.25 | 0.00 | **-0.25** |
+| Seller `BBTccd...` (USDC) | 0.25 | 0.50 | **+0.25** |
+
+### Who paid whom
+
+| Party | USDC | SOL | Signed |
+| --- | ---: | ---: | --- |
+| Buyer | -0.25 | -0.003134280 | lock |
+| Seller | **+0.25** | 0 | nothing |
+| Arbiter | 0 | -0.000005000 | release |
+
+Three details this makes concrete:
+
+**The seller never signs.** It cannot take the money, only receive it once the
+arbiter attests delivery. The party who decides is not the party who is paid.
+
+**The arbiter pays to settle and earns nothing.** It is a service the seller
+operates, so its revenue is off-chain. A deployment where the arbiter never
+collects would run at a loss.
+
+**The buyer pays rent it does not get back.** The `0.003129280` of rent in step 2
+created accounts owned by the program; `reclaim` after the deadline refunds the
+escrowed amount, not that rent. The quoted price is therefore a lower bound on
+what a buyer spends, by roughly `0.0031` SOL per request on a fresh escrow.
+
+### The vault is purged, the token account is not
+
+After settlement the vault PDA reports as non-existent rather than zero: a
+system account drained to zero lamports is removed by the runtime at the end of
+the transaction. The vault's *token* account survives, allocated and holding
+zero, because token accounts close explicitly rather than by balance. That
+asymmetry is easy to trip over when reconciling: the address you read in step 2
+returns nothing in step 5.
+
+### Reproducing it
+
+```bash
+AESDR_APP_URL=https://cybwfaesdr.vercel.app \
+AESDR_RPC=https://api.devnet.solana.com \
+node --experimental-strip-types scripts/e2e-local.mts
+```
+
+The buyer needs devnet USDC in its token account, not its wallet, and SOL for
+fees and rent. The seller needs no USDC: settlement credits it automatically.
+
 ### When a step fails
 
 | Symptom | Cause |
